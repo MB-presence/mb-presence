@@ -283,4 +283,24 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
       )}
     </div>
   );
+}function AbsenceForm({ onBack, onSend }) {
+  const [date, setDate] = useState(todayISO());
+  const [motif, setMotif] = useState("");
+  const [detail, setDetail] = useState("");
+  return (
+    <div className="flex-1 flex flex-col px-6 pt-6">
+      <button onClick={onBack} className="mb-4 self-start"><ChevronLeft size={20} /></button>
+      <div className="text-sm font-semibold mb-4" style={{ fontFamily: FD }}>Signaler une absence</div>
+      <div className="flex flex-col gap-3">
+        <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+        <Field label="Motif">
+          <select value={motif} onChange={e => setMotif(e.target.value)} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle}>
+            <option value="">Sélectionner un motif</option>{MOTIFS.map(m => <option key={m}>{m}</option>)}
+          </select>
+        </Field>
+        <Field label="Explication (optionnel)"><textarea value={detail} onChange={e => setDetail(e.target.value)} rows={3} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none resize-none" style={inputStyle} /></Field>
+      </div>
+      <div className="mt-5"><Btn disabled={!motif} onClick={() => onSend({ date, motif, detail })}>Envoyer la demande</Btn></div>
+    </div>
+  );
 }
