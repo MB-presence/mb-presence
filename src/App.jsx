@@ -148,3 +148,139 @@ function EmployeeLogin({ onLogin }) {
     </div>
   );
 }
+function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsences, onLogout }) {
+  const [live, setLive] = useState(employee);
+  const [screen, setScreen] = useState("accueil");
+  const [tab, setTab] = useState("accueil");
+  const [enteredCode, setEnteredCode] = useState("");
+  const [codeErr, setCodeErr] = useState("");
+
+  const isToday = live.activity_date === todayISO();
+  const status = isToday ? live.status : "Absent";
+  const arrivee = isToday ? live.arrivee : "--:--";
+  const depart = isToday ? live.depart : "--:--";
+  const canDepart = arrivee !== "--:--" && depart === "--:--";
+
+  const doScan = async () => {
+    if (enteredCode.trim().toUpperCase() !== siteCode.toUpperCase()) { setCodeErr("Code incorrect. Vérifiez le code affiché sur site."); return; }
+    const time = nowHM();
+    const late = time > "08:00";
+    const status2 = late ? "Retard" : "Présent";
+    await supabase.rpc("record_arrival", { p_employee_id: live.id, p_time: time, p_status: status2 });
+    setLive(l => ({ ...l, status: status2, arrivee: time, depart: "--:--", activity_date: todayISO() }));
+    refreshHistory();
+    setEnteredCode(""); setCodeErr(""); setScreen("conf-arrivee");
+  };
+  const doDepart = async () => {
+    const time = nowHM();
+    await supabase.rpc("record_departure", { p_employee_id: live.id, p_time: time });
+    setLive(l => ({ ...l, depart: time }));
+    refreshHistory();
+    setScreen("conf-depart");
+  };
+  const sendAbsence = async (d) => {
+    await supabase.from("absences").insert({ employee_id: live.id, employee_name: live.name, ...d, status: "En attente" });
+    refreshAbsences();
+    setScreen("accueil");
+  };
+
+  const myHistory = history.filter(h => h.employee_id === live.id);
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {screen === "accueil" && (
+        <div className="flex-1 overflow-y-auto">
+          <div className="px-5 pt-5 pb-6" style={{ background: C.blue, borderBottomLeftRadius: 22, borderBottomRightRadius: 22 }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs" style={{ color: "#CBDCF3" }}>Bonjour,</div>
+                <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17, color: "#fff" }}>{live.name}</div>
+                <div className="text-xs mt-0.5" style={{ color: "#CBDCF3" }}>{live.role}</div>
+              </div>
+              <button onClick={onLogout}><LogOut size={18} color="#fff" /></button>
+            </div>
+            <div className="rounded-2xl mt-4 p-4 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.12)" }}>
+              <div><div className="text-xs" style={{ color: "#CBDCF3" }}>Statut du jour</div><span style={{ color: "#fff", fontFamily: FD, fontWeight: 700, fontSize: 15 }}>{status}</span></div>
+              <div className="text-right text-xs" style={{ color: "#CBDCF3" }}><div>Arrivée : {arrivee}</div><div>Départ : {depart}</div></div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 px-5 mt-5">
+            <button onClick={() => setScreen("scanner")} className="flex flex-col items-start gap-2 p-4 rounded-2xl text-left" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+              <QrCode size={18} color={C.blue} /><span className="text-xs font-semibold">Enregistrer arrivée</span>
+            </button>
+            <button disabled={!canDepart} onClick={doDepart} className="flex flex-col items-start gap-2 p-4 rounded-2xl text-left" style={{ background: C.card, border: `1px solid ${C.border}`, opacity: canDepart ? 1 : 0.4 }}>
+              <LogOut size={18} color={C.green} /><span className="text-xs font-semibold">Enregistrer départ</span>
+            </button>
+            <button onClick={() => setScreen("absence")} className="flex flex-col items-start gap-2 p-4 rounded-2xl text-left" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+              <Calendar size={18} color={C.amber} /><span className="text-xs font-semibold">Signaler une absence</span>
+            </button>
+            <button onClick={() => setScreen("historique")} className="flex flex-col items-start gap-2 p-4 rounded-2xl text-left" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+              <History size={18} color={C.navy} /><span className="text-xs font-semibold">Mon historique</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {screen === "scanner" && (
+        <div className="flex-1 flex flex-col px-6 pt-6">
+          <button onClick={() => setScreen("accueil")} className="mb-4 self-start"><ChevronLeft size={20} /></button>
+          <div className="text-sm font-semibold mb-1" style={{ fontFamily: FD }}>Code de présence du jour</div>
+          <div className="text-xs mb-4" style={{ color: C.muted }}>Saisissez le code affiché par l'administrateur sur le site.</div>
+          <Field label="Code de site">
+            <input value={enteredCode} onChange={e => { setEnteredCode(e.target.value); setCodeErr(""); }} placeholder="Ex : MB-4F9A" className="w-full px-3.5 py-3 rounded-xl text-sm outline-none uppercase" style={inputStyle} />
+          </Field>
+          {codeErr && <div className="text-xs mt-2" style={{ color: C.red }}>{codeErr}</div>}
+          <div className="mt-4"><Btn icon={QrCode} onClick={doScan}>Valider ma présence</Btn></div>
+        </div>
+      )}
+
+      {(screen === "conf-arrivee" || screen === "conf-depart") && (
+        <div className="flex-1 flex flex-col items-center px-6 pt-10">
+          <div className="rounded-full flex items-center justify-center mb-4" style={{ width: 70, height: 70, background: C.greenLight }}><CheckCircle2 size={34} color={C.green} /></div>
+          <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 15 }}>{screen === "conf-arrivee" ? "Arrivée enregistrée !" : "Départ enregistré !"}</div>
+          <div className="w-full mt-6"><Btn onClick={() => setScreen("accueil")}>OK</Btn></div>
+        </div>
+      )}
+
+      {screen === "absence" && <AbsenceForm onBack={() => setScreen("accueil")} onSend={sendAbsence} />}
+
+      {screen === "historique" && (
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <button onClick={() => setScreen("accueil")} className="mb-3"><ChevronLeft size={20} /></button>
+          {myHistory.length === 0 ? <Empty icon={History} title="Aucun historique" sub="Vos arrivées et départs apparaîtront ici." /> :
+            <div className="flex flex-col gap-2">
+              {myHistory.map((h) => (
+                <div key={h.id} className="flex items-center justify-between p-3 rounded-xl" style={{ background: C.card, border: `1px solid ${C.border}` }}>
+                  <div><div className="text-sm font-medium">{h.date}</div><div className="text-xs" style={{ color: C.muted }}>{h.detail}</div></div>
+                  <StatusPill status={h.status} />
+                </div>
+              ))}
+            </div>}
+        </div>
+      )}
+
+      {screen === "profil" && (
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <div className="flex flex-col items-center mb-5"><Avatar name={live.name} size={64} /><div className="text-sm font-semibold mt-2" style={{ fontFamily: FD }}>{live.name}</div></div>
+          {[["Profession", live.role], ["Département", live.dept], ["Téléphone", live.phone || "—"], ["Email", live.email || "—"], ["Matricule", live.matricule]].map(([l, v]) => (
+            <div key={l} className="flex items-center justify-between py-3" style={{ borderTop: `1px solid ${C.border}` }}>
+              <span className="text-xs" style={{ color: C.muted }}>{l}</span><span className="text-sm font-medium">{v}</span>
+            </div>
+          ))}
+          <div className="mt-5"><Btn variant="ghost" icon={LogOut} onClick={onLogout}>Se déconnecter</Btn></div>
+        </div>
+      )}
+
+      {["accueil", "historique", "profil"].includes(screen) && (
+        <div className="flex items-center justify-around shrink-0" style={{ height: 60, background: C.card, borderTop: `1px solid ${C.border}` }}>
+          {[["accueil", Home, "Accueil"], ["historique", History, "Historique"], ["profil", User, "Profil"]].map(([k, Icon, l]) => (
+            <button key={k} onClick={() => { setScreen(k); setTab(k); }} className="flex flex-col items-center gap-1">
+              <Icon size={18} color={tab === k ? C.blue : C.muted} />
+              <span style={{ fontSize: 10, fontWeight: tab === k ? 700 : 500, color: tab === k ? C.blue : C.muted }}>{l}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
