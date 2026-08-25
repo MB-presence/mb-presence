@@ -304,3 +304,77 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
     </div>
   );
 }
+// ================= APP RACINE =================
+export default function App() {
+  const [ready, setReady] = useState(false);
+  const [role, setRole] = useState(null);
+  const [adminSession, setAdminSession] = useState(null);
+  const [empUser, setEmpUser] = useState(null);
+
+  const [employees, setEmployees] = useState([]);
+  const [absences, setAbsences] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [siteCode, setSiteCode] = useState("MB-INIT");
+
+  const refreshEmployees = async () => setEmployees(await fetchEmployees());
+  const refreshAbsences = async () => setAbsences(await fetchAbsences());
+  const refreshHistory = async () => setHistory(await fetchHistory());
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      setAdminSession(data.session);
+      await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory()]);
+      setSiteCode(await fetchSiteCode());
+      setReady(true);
+    })();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => setAdminSession(session));
+
+    const channel = supabase
+      .channel("mbp-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "employees" }, refreshEmployees)
+      .on("postgres_changes", { event: "*", schema: "public", table: "absences" }, refreshAbsences)
+      .on("postgres_changes", { event: "*", schema: "public", table: "history" }, refreshHistory)
+      .on("postgres_changes", { event: "*", schema: "public", table: "site_settings" }, async () => setSiteCode(await fetchSiteCode()))
+      .subscribe();
+
+    return () => { sub.subscription.unsubscribe(); supabase.removeChannel(channel); };
+  }, []);
+
+  if (!ready) {
+    return <div className="flex items-center justify-center" style={{ height: 400, color: C.muted, fontFamily: FB }}>Chargement…</div>;
+  }
+
+  return (
+    <div style={{ fontFamily: FB, background: C.bg }} className="flex justify-center min-h-screen py-6">
+      <div className="flex flex-col overflow-hidden" style={{ width: 380, height: 780, borderRadius: 28, border: `8px solid ${C.navy}`, boxShadow: "0 20px 50px rgba(11,31,58,0.25)" }}>
+        {!role && (
+          <div className="flex-1 flex flex-col justify-center px-8 gap-3" style={{ background: C.bg }}>
+            <div className="flex flex-col items-center mb-6">
+              <div className="rounded-2xl flex items-center justify-center font-extrabold mb-3" style={{ width: 60, height: 60, background: C.gold, color: C.navy, fontFamily: FD, fontSize: 22 }}>MB</div>
+              <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 18 }}>MB PRESENCE</div>
+              <div className="text-xs mt-1" style={{ color: C.muted }}>Choisissez votre espace</div>
+            </div>
+            <Btn onClick={() => setRole("employee")} icon={User}>Espace Employé</Btn>
+            <Btn variant="ghost" onClick={() => setRole("admin")} icon={Shield}>Espace Administrateur</Btn>
+          </div>
+        )}
+
+        {role === "admin" && !adminSession && <AdminLogin onLogin={() => {}} />}
+        {role === "admin" && adminSession && (
+          <AdminApp employees={employees} refreshEmployees={refreshEmployees} absences={absences} refreshAbsences={refreshAbsences}
+            siteCode={siteCode} setSiteCode={setSiteCode}
+            onLogout={async () => { await supabase.auth.signOut(); setRole(null); }} />
+        )}
+
+        {role === "employee" && !empUser && <EmployeeLogin onLogin={setEmpUser} />}
+        {role === "employee" && empUser && (
+          <EmployeeApp employee={empUser} siteCode={siteCode} history={history}
+            refreshHistory={refreshHistory} refreshAbsences={refreshAbsences}
+            onLogout={() => { setEmpUser(null); setRole(null); }} />
+        )}
+      </div>
+    </div>
+  );
+}
