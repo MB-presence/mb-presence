@@ -116,3 +116,35 @@ function AdminAddModal({ onClose, onSave }) {
     </div>
   );
 }                                             }
+// ================= EMPLOYÉ =================
+function EmployeeLogin({ onLogin }) {
+  const [matricule, setMatricule] = useState("");
+  const [pin, setPin] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const tryLogin = async () => {
+    setLoading(true); setErr("");
+    const { data, error } = await supabase.rpc("verify_employee_login", { p_matricule: matricule.trim(), p_pin: pin.trim() });
+    setLoading(false);
+    if (error || !data || data.length === 0) { setErr("Matricule ou code PIN incorrect."); return; }
+    onLogin(data[0]);
+  };
+
+  return (
+    <div className="flex-1 flex flex-col justify-center px-6">
+      <div className="flex flex-col items-center mb-6">
+        <div className="rounded-2xl flex items-center justify-center font-extrabold mb-3" style={{ width: 56, height: 56, background: C.gold, color: C.navy, fontFamily: FD, fontSize: 20 }}>MB</div>
+        <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>MB PRESENCE</div>
+        <div className="text-xs mt-1" style={{ color: C.muted }}>Connexion employé</div>
+      </div>
+      <div className="flex flex-col gap-3">
+        <Field label="Matricule"><input value={matricule} onChange={e => { setMatricule(e.target.value); setErr(""); }} placeholder="Ex : MB1001" className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+        <Field label="Code PIN"><input value={pin} onChange={e => { setPin(e.target.value); setErr(""); }} placeholder="4 chiffres" className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+      </div>
+      {err && <div className="text-xs mt-2" style={{ color: C.red }}>{err}</div>}
+      <div className="mt-4"><Btn disabled={loading} icon={LogIn} onClick={tryLogin}>{loading ? "Connexion..." : "Se connecter"}</Btn></div>
+      <div className="text-center text-xs mt-6" style={{ color: C.muted }}>Matricule et PIN sont remis par l'administrateur.</div>
+    </div>
+  );
+}
