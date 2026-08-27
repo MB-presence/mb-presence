@@ -390,5 +390,7 @@ export default function App() {
       }
       setReady(true);
     })();
+}if (initError) {
+    return <div style={{ padding: 24, color: C.red, fontFamily: FB, fontSize: 13 }}>Erreur de connexion : {initError}</div>;
 }
 
