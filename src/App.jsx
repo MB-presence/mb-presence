@@ -376,5 +376,19 @@ export default function App() {
         )}
       </div>
     </div>
-  );
+  );const [initError, setInitError] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        setAdminSession(data.session);
+        await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory()]);
+        setSiteCode(await fetchSiteCode());
+      } catch (e) {
+        setInitError(String(e && e.message ? e.message : e));
+      }
+      setReady(true);
+    })();
 }
+
