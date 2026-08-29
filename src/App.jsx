@@ -49,7 +49,31 @@ function Empty({ icon: Icon, title, sub }) {
       {sub && <div className="text-xs mt-1 max-w-xs" style={{ color: C.muted }}>{sub}</div>}
     </div>
   );
- // ================= ADMIN =================
+}
+
+// ---------- Accès aux données (Supabase) ----------
+async function fetchEmployees() {
+  const { data, error } = await supabase.from("employees_public").select("*").order("created_at");
+  if (error) { console.error(error); return []; }
+  return data;
+}
+async function fetchAbsences() {
+  const { data, error } = await supabase.from("absences").select("*").order("created_at", { ascending: false });
+  if (error) { console.error(error); return []; }
+  return data;
+}
+async function fetchHistory() {
+  const { data, error } = await supabase.from("history").select("*").order("created_at", { ascending: false });
+  if (error) { console.error(error); return []; }
+  return data;
+}
+async function fetchSiteCode() {
+  const { data, error } = await supabase.from("site_settings").select("*").eq("id", 1).single();
+  if (error) { console.error(error); return "MB-INIT"; }
+  return data.site_code;
+}
+
+// ================= ADMIN =================
 function AdminLogin({ onLogin }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -115,7 +139,140 @@ function AdminAddModal({ onClose, onSave }) {
       </div>
     </div>
   );
-}                                             }
+}
+
+function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, siteCode, setSiteCode, onLogout }) {
+  const [tab, setTab] = useState("dashboard");
+  const [showAdd, setShowAdd] = useState(false);
+
+  const present = employees.filter(e => e.status === "Présent").length;
+  const absent = employees.filter(e => e.status === "Absent").length;
+  const retard = employees.filter(e => e.status === "Retard").length;
+
+  const addEmployee = async (f) => {
+    const { error } = await supabase.rpc("create_employee", {
+      p_matricule: f.matricule.trim(), p_pin: f.pin.trim(), p_name: f.name.trim(),
+      p_role: f.role.trim(), p_dept: f.dept, p_phone: f.phone.trim(), p_email: f.email.trim(),
+    });
+    if (error) { alert("Erreur : " + error.message); return; }
+    setShowAdd(false);
+    refreshEmployees();
+  };
+  const deleteEmployee = async (id) => {
+    if (!confirm("Supprimer cette fiche ?")) return;
+    await supabase.from("employees").delete().eq("id", id);
+    refreshEmployees();
+  };
+  const updateAbsence = async (id, status) => {
+    await supabase.from("absences").update({ status }).eq("id", id);
+    refreshAbsences();
+  };
+  const regenerateCode = async () => {
+    const code = genSiteCode();
+    await supabase.from("site_settings").update({ site_code: code, updated_at: new Date().toISOString() }).eq("id", 1);
+    setSiteCode(code);
+  };
+
+  const nav = [
+    { key: "dashboard", label: "Tableau de bord", icon: Home },
+    { key: "personnel", label: "Personnel", icon: Users },
+    { key: "absences", label: "Absences", icon: CalendarX },
+    { key: "securite", label: "Code du jour", icon: Shield },
+  ];
+
+  return (
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex items-center justify-between px-4 h-14 shrink-0" style={{ background: C.navy }}>
+        <span style={{ fontFamily: FD, fontWeight: 700, fontSize: 14, color: "#fff" }}>Admin MB PRESENCE</span>
+        <button onClick={onLogout}><LogOut size={17} color="#B9C6DE" /></button>
+      </div>
+      <div className="flex overflow-x-auto gap-2 px-3 py-2 shrink-0" style={{ background: C.navy }}>
+        {nav.map(n => (
+          <button key={n.key} onClick={() => setTab(n.key)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs whitespace-nowrap"
+            style={{ background: tab === n.key ? "rgba(232,163,61,0.16)" : "transparent", color: tab === n.key ? C.gold : "#B9C6DE" }}>
+            <n.icon size={13} /> {n.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        {tab === "dashboard" && (
+          <div className="flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ fontFamily: FD }}>{employees.length}</div><div className="text-xs" style={{ color: C.muted }}>Personnel total</div></Card>
+              <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ color: C.green, fontFamily: FD }}>{present}</div><div className="text-xs" style={{ color: C.muted }}>Présents</div></Card>
+              <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ color: C.red, fontFamily: FD }}>{absent}</div><div className="text-xs" style={{ color: C.muted }}>Absents</div></Card>
+              <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ color: C.amber, fontFamily: FD }}>{retard}</div><div className="text-xs" style={{ color: C.muted }}>Retards</div></Card>
+            </div>
+            <Card style={{ padding: 16 }}>
+              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Présences du jour</div>
+              {employees.length === 0 ? <Empty icon={Users} title="Aucun employé" sub="Ajoutez votre personnel dans l'onglet Personnel." /> :
+                <div className="flex flex-col gap-2">
+                  {employees.map(e => (
+                    <div key={e.id} className="flex items-center justify-between py-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                      <div className="flex items-center gap-2"><Avatar name={e.name} size={28} /><span className="text-sm font-medium">{e.name}</span></div>
+                      <StatusPill status={e.activity_date === todayISO() ? e.status : "Absent"} />
+                    </div>
+                  ))}
+                </div>}
+            </Card>
+          </div>
+        )}
+
+        {tab === "personnel" && (
+          <div className="flex flex-col gap-3">
+            <Btn icon={Plus} onClick={() => setShowAdd(true)}>Ajouter un employé</Btn>
+            {employees.length === 0 ? <Empty icon={Users} title="Aucun employé enregistré" sub="Ajoutez les vraies fiches de votre personnel." /> :
+              employees.map(e => (
+                <Card key={e.id} style={{ padding: 14 }}>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3"><Avatar name={e.name} /><div><div className="text-sm font-medium">{e.name}</div><div className="text-xs" style={{ color: C.muted }}>{e.role} · {e.dept}</div></div></div>
+                    <button onClick={() => deleteEmployee(e.id)} className="p-1.5 rounded-lg" style={{ background: C.redLight }}><Trash2 size={14} color={C.red} /></button>
+                  </div>
+                  <div className="text-xs mt-2" style={{ color: C.muted }}>Matricule : {e.matricule}</div>
+                </Card>
+              ))}
+          </div>
+        )}
+
+        {tab === "absences" && (
+          <div className="flex flex-col gap-3">
+            {absences.length === 0 ? <Empty icon={CalendarX} title="Aucune demande d'absence" sub="Les signalements envoyés par les employés apparaîtront ici." /> :
+              absences.map(a => (
+                <Card key={a.id} style={{ padding: 14 }}>
+                  <div className="flex items-center justify-between">
+                    <div><div className="text-sm font-medium">{a.employee_name}</div><div className="text-xs" style={{ color: C.muted }}>{a.date} · {a.motif}{a.detail ? ` — ${a.detail}` : ""}</div></div>
+                    <div className="flex items-center gap-2">
+                      <StatusPill status={a.status} />
+                      {a.status === "En attente" && <>
+                        <button onClick={() => updateAbsence(a.id, "Approuvée")} className="p-1.5 rounded-lg" style={{ background: C.greenLight }}><Check size={14} color={C.green} /></button>
+                        <button onClick={() => updateAbsence(a.id, "Refusée")} className="p-1.5 rounded-lg" style={{ background: C.redLight }}><X size={14} color={C.red} /></button>
+                      </>}
+                    </div>
+                  </div>
+                </Card>
+              ))}
+          </div>
+        )}
+
+        {tab === "securite" && (
+          <div className="flex flex-col gap-3">
+            <Card style={{ padding: 18 }}>
+              <div className="text-sm font-semibold mb-1" style={{ fontFamily: FD }}>Code de site du jour</div>
+              <div className="text-xs mb-4" style={{ color: C.muted }}>Affichez ce code dans les locaux. L'employé doit le saisir pour valider sa présence.</div>
+              <div className="text-center py-6 rounded-xl mb-3" style={{ background: C.navy }}>
+                <div style={{ fontFamily: FD, fontWeight: 800, fontSize: 32, color: C.gold, letterSpacing: 2 }}>{siteCode}</div>
+              </div>
+              <Btn icon={RefreshCw} variant="ghost" onClick={regenerateCode}>Régénérer le code</Btn>
+            </Card>
+          </div>
+        )}
+      </div>
+      {showAdd && <AdminAddModal onClose={() => setShowAdd(false)} onSave={addEmployee} />}
+    </div>
+  );
+}
+
 // ================= EMPLOYÉ =================
 function EmployeeLogin({ onLogin }) {
   const [matricule, setMatricule] = useState("");
@@ -148,6 +305,7 @@ function EmployeeLogin({ onLogin }) {
     </div>
   );
 }
+
 function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsences, onLogout }) {
   const [live, setLive] = useState(employee);
   const [screen, setScreen] = useState("accueil");
@@ -283,7 +441,9 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
       )}
     </div>
   );
-}function AbsenceForm({ onBack, onSend }) {
+}
+
+function AbsenceForm({ onBack, onSend }) {
   const [date, setDate] = useState(todayISO());
   const [motif, setMotif] = useState("");
   const [detail, setDetail] = useState("");
@@ -304,9 +464,11 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
     </div>
   );
 }
+
 // ================= APP RACINE =================
 export default function App() {
   const [ready, setReady] = useState(false);
+  const [initError, setInitError] = useState(null);
   const [role, setRole] = useState(null);
   const [adminSession, setAdminSession] = useState(null);
   const [empUser, setEmpUser] = useState(null);
@@ -322,10 +484,14 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      setAdminSession(data.session);
-      await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory()]);
-      setSiteCode(await fetchSiteCode());
+      try {
+        const { data } = await supabase.auth.getSession();
+        setAdminSession(data.session);
+        await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory()]);
+        setSiteCode(await fetchSiteCode());
+      } catch (e) {
+        setInitError(String(e && e.message ? e.message : e));
+      }
       setReady(true);
     })();
 
@@ -344,6 +510,9 @@ export default function App() {
 
   if (!ready) {
     return <div className="flex items-center justify-center" style={{ height: 400, color: C.muted, fontFamily: FB }}>Chargement…</div>;
+  }
+  if (initError) {
+    return <div style={{ padding: 24, color: C.red, fontFamily: FB, fontSize: 13 }}>Erreur de connexion : {initError}</div>;
   }
 
   return (
@@ -376,21 +545,5 @@ export default function App() {
         )}
       </div>
     </div>
-  );const [initError, setInitError] = useState(null);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        setAdminSession(data.session);
-        await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory()]);
-        setSiteCode(await fetchSiteCode());
-      } catch (e) {
-        setInitError(String(e && e.message ? e.message : e));
-      }
-      setReady(true);
-    })();
-}if (initError) {
-    return <div style={{ padding: 24, color: C.red, fontFamily: FB, fontSize: 13 }}>Erreur de connexion : {initError}</div>;
-}
-
+  );
+}                       
