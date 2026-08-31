@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import {
   QrCode, LogIn, ChevronLeft, Home, History, User, Calendar,
-  CheckCircle2, LogOut, Users, CalendarX, Plus, Trash2, Check, X, Shield, RefreshCw,
+  CheckCircle2, LogOut, Users, CalendarX, Plus, Trash2, Check, X, Shield, RefreshCw, MapPin,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import { C, FD, FB, DEPARTMENTS, MOTIFS, todayISO, nowHM, genSiteCode } from "./theme";
@@ -72,6 +72,30 @@ async function fetchSiteCode() {
   if (error) { console.error(error); return "MB-INIT"; }
   return data.site_code;
 }
+async function fetchSites() {
+  const { data, error } = await supabase.from("sites").select("*").order("name");
+  if (error) { console.error(error); return []; }
+  return data;
+}
+
+// Récupère la position GPS du téléphone, avec un message d'erreur clair en français
+function getLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("La géolocalisation n'est pas disponible sur cet appareil."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (err) => {
+        if (err.code === 1) reject(new Error("Vous devez autoriser l'accès à la localisation pour badger."));
+        else if (err.code === 2) reject(new Error("Position introuvable. Vérifiez que le GPS est activé."));
+        else reject(new Error("Impossible d'obtenir votre position. Réessayez."));
+      },
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  });
+}
 
 // ================= ADMIN =================
 function AdminLogin({ onLogin }) {
@@ -108,10 +132,10 @@ function AdminLogin({ onLogin }) {
   );
 }
 
-function AdminAddModal({ onClose, onSave }) {
-  const [f, setF] = useState({ matricule: "", pin: "", name: "", role: "", dept: DEPARTMENTS[0], phone: "", email: "" });
+function AdminAddModal({ onClose, onSave, sites }) {
+  const [f, setF] = useState({ matricule: "", pin: "", name: "", role: "", dept: DEPARTMENTS[0], phone: "", email: "", site_id: sites[0]?.id || "" });
   const set = k => e => setF(s => ({ ...s, [k]: e.target.value }));
-  const ok = f.matricule.trim() && f.pin.trim().length === 4 && f.name.trim() && f.role.trim();
+  const ok = f.matricule.trim() && f.pin.trim().length === 4 && f.name.trim() && f.role.trim() && f.site_id;
   return (
     <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ background: "rgba(11,31,58,0.45)" }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} className="w-full max-w-md rounded-2xl p-6 max-h-[90vh] overflow-y-auto" style={{ background: C.card }}>
@@ -124,6 +148,12 @@ function AdminAddModal({ onClose, onSave }) {
           <Field label="Code PIN (4 chiffres, à transmettre à l'employé)"><input value={f.pin} onChange={set("pin")} placeholder="Ex : 4821" maxLength={4} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
           <Field label="Nom et prénom"><input value={f.name} onChange={set("name")} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
           <Field label="Fonction"><input value={f.role} onChange={set("role")} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+          <Field label="Agence">
+            <select value={f.site_id} onChange={set("site_id")} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle}>
+              {sites.length === 0 && <option value="">Aucune agence disponible</option>}
+              {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </Field>
           <Field label="Département">
             <select value={f.dept} onChange={set("dept")} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle}>
               {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
@@ -141,7 +171,7 @@ function AdminAddModal({ onClose, onSave }) {
   );
 }
 
-function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, siteCode, setSiteCode, onLogout }) {
+function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, siteCode, setSiteCode, sites, onLogout }) {
   const [tab, setTab] = useState("dashboard");
   const [showAdd, setShowAdd] = useState(false);
 
@@ -153,6 +183,7 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
     const { error } = await supabase.rpc("create_employee", {
       p_matricule: f.matricule.trim(), p_pin: f.pin.trim(), p_name: f.name.trim(),
       p_role: f.role.trim(), p_dept: f.dept, p_phone: f.phone.trim(), p_email: f.email.trim(),
+      p_site_id: f.site_id,
     });
     if (error) { alert("Erreur : " + error.message); return; }
     setShowAdd(false);
@@ -210,7 +241,7 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
                 <div className="flex flex-col gap-2">
                   {employees.map(e => (
                     <div key={e.id} className="flex items-center justify-between py-2" style={{ borderTop: `1px solid ${C.border}` }}>
-                      <div className="flex items-center gap-2"><Avatar name={e.name} size={28} /><span className="text-sm font-medium">{e.name}</span></div>
+                      <div className="flex items-center gap-2"><Avatar name={e.name} size={28} /><div><span className="text-sm font-medium block">{e.name}</span><span className="text-xs" style={{ color: C.muted }}>{e.site_name || "—"}</span></div></div>
                       <StatusPill status={e.activity_date === todayISO() ? e.status : "Absent"} />
                     </div>
                   ))}
@@ -229,7 +260,7 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
                     <div className="flex items-center gap-3"><Avatar name={e.name} /><div><div className="text-sm font-medium">{e.name}</div><div className="text-xs" style={{ color: C.muted }}>{e.role} · {e.dept}</div></div></div>
                     <button onClick={() => deleteEmployee(e.id)} className="p-1.5 rounded-lg" style={{ background: C.redLight }}><Trash2 size={14} color={C.red} /></button>
                   </div>
-                  <div className="text-xs mt-2" style={{ color: C.muted }}>Matricule : {e.matricule}</div>
+                  <div className="text-xs mt-2 flex items-center gap-1" style={{ color: C.muted }}><MapPin size={11} /> {e.site_name || "Aucune agence"} · Matricule : {e.matricule}</div>
                 </Card>
               ))}
           </div>
@@ -259,16 +290,25 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
           <div className="flex flex-col gap-3">
             <Card style={{ padding: 18 }}>
               <div className="text-sm font-semibold mb-1" style={{ fontFamily: FD }}>Code de site du jour</div>
-              <div className="text-xs mb-4" style={{ color: C.muted }}>Affichez ce code dans les locaux. L'employé doit le saisir pour valider sa présence.</div>
+              <div className="text-xs mb-4" style={{ color: C.muted }}>Affichez ce code dans les locaux. L'employé doit le saisir ET être physiquement sur son agence pour valider sa présence.</div>
               <div className="text-center py-6 rounded-xl mb-3" style={{ background: C.navy }}>
                 <div style={{ fontFamily: FD, fontWeight: 800, fontSize: 32, color: C.gold, letterSpacing: 2 }}>{siteCode}</div>
               </div>
               <Btn icon={RefreshCw} variant="ghost" onClick={regenerateCode}>Régénérer le code</Btn>
             </Card>
+            <Card style={{ padding: 16 }}>
+              <div className="text-sm font-semibold mb-2" style={{ fontFamily: FD }}>Agences enregistrées</div>
+              {sites.length === 0 ? <div className="text-xs" style={{ color: C.muted }}>Aucune agence configurée.</div> :
+                sites.map(s => (
+                  <div key={s.id} className="flex items-center gap-2 py-1.5 text-xs" style={{ color: C.text }}>
+                    <MapPin size={12} color={C.blue} /> {s.name} <span style={{ color: C.muted }}>(rayon {s.radius_meters} m)</span>
+                  </div>
+                ))}
+            </Card>
           </div>
         )}
       </div>
-      {showAdd && <AdminAddModal onClose={() => setShowAdd(false)} onSave={addEmployee} />}
+      {showAdd && <AdminAddModal onClose={() => setShowAdd(false)} onSave={addEmployee} sites={sites} />}
     </div>
   );
 }
@@ -312,6 +352,7 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
   const [tab, setTab] = useState("accueil");
   const [enteredCode, setEnteredCode] = useState("");
   const [codeErr, setCodeErr] = useState("");
+  const [scanning, setScanning] = useState(false);
 
   const isToday = live.activity_date === todayISO();
   const status = isToday ? live.status : "Absent";
@@ -321,13 +362,26 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
 
   const doScan = async () => {
     if (enteredCode.trim().toUpperCase() !== siteCode.toUpperCase()) { setCodeErr("Code incorrect. Vérifiez le code affiché sur site."); return; }
-    const time = nowHM();
-    const late = time > "08:00";
-    const status2 = late ? "Retard" : "Présent";
-    await supabase.rpc("record_arrival", { p_employee_id: live.id, p_time: time, p_status: status2 });
-    setLive(l => ({ ...l, status: status2, arrivee: time, depart: "--:--", activity_date: todayISO() }));
-    refreshHistory();
-    setEnteredCode(""); setCodeErr(""); setScreen("conf-arrivee");
+    setScanning(true);
+    setCodeErr("");
+    try {
+      const { lat, lng } = await getLocation();
+      const time = nowHM();
+      const late = time > "08:00";
+      const status2 = late ? "Retard" : "Présent";
+      const { error } = await supabase.rpc("record_arrival", {
+        p_employee_id: live.id, p_time: time, p_status: status2, p_lat: lat, p_lng: lng,
+      });
+      if (error) throw error;
+      setLive(l => ({ ...l, status: status2, arrivee: time, depart: "--:--", activity_date: todayISO() }));
+      refreshHistory();
+      setEnteredCode("");
+      setScreen("conf-arrivee");
+    } catch (e) {
+      setCodeErr(e.message || "Impossible de valider la présence.");
+    } finally {
+      setScanning(false);
+    }
   };
   const doDepart = async () => {
     const time = nowHM();
@@ -353,7 +407,7 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
               <div>
                 <div className="text-xs" style={{ color: "#CBDCF3" }}>Bonjour,</div>
                 <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17, color: "#fff" }}>{live.name}</div>
-                <div className="text-xs mt-0.5" style={{ color: "#CBDCF3" }}>{live.role}</div>
+                <div className="text-xs mt-0.5" style={{ color: "#CBDCF3" }}>{live.role}{live.site_name ? ` · ${live.site_name}` : ""}</div>
               </div>
               <button onClick={onLogout}><LogOut size={18} color="#fff" /></button>
             </div>
@@ -383,12 +437,12 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
         <div className="flex-1 flex flex-col px-6 pt-6">
           <button onClick={() => setScreen("accueil")} className="mb-4 self-start"><ChevronLeft size={20} /></button>
           <div className="text-sm font-semibold mb-1" style={{ fontFamily: FD }}>Code de présence du jour</div>
-          <div className="text-xs mb-4" style={{ color: C.muted }}>Saisissez le code affiché par l'administrateur sur le site.</div>
+          <div className="text-xs mb-4" style={{ color: C.muted }}>Saisissez le code affiché par l'administrateur. Votre position sera vérifiée pour confirmer que vous êtes sur votre agence.</div>
           <Field label="Code de site">
             <input value={enteredCode} onChange={e => { setEnteredCode(e.target.value); setCodeErr(""); }} placeholder="Ex : MB-4F9A" className="w-full px-3.5 py-3 rounded-xl text-sm outline-none uppercase" style={inputStyle} />
           </Field>
           {codeErr && <div className="text-xs mt-2" style={{ color: C.red }}>{codeErr}</div>}
-          <div className="mt-4"><Btn icon={QrCode} onClick={doScan}>Valider ma présence</Btn></div>
+          <div className="mt-4"><Btn icon={MapPin} onClick={doScan} disabled={scanning}>{scanning ? "Vérification de la position..." : "Valider ma présence"}</Btn></div>
         </div>
       )}
 
@@ -405,7 +459,7 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
       {screen === "historique" && (
         <div className="flex-1 overflow-y-auto px-5 py-5">
           <button onClick={() => setScreen("accueil")} className="mb-3"><ChevronLeft size={20} /></button>
-          {myHistory.length === 0 ? <Empty icon={History} title="Aucun historique" sub="Vos arrivées et départs apparaîtront ici." /> :
+          {myHistory.length === 0  ? <Empty icon={History} title="Aucun historique" sub="Vos arrivées et départs apparaîtront ici." /> :
             <div className="flex flex-col gap-2">
               {myHistory.map((h) => (
                 <div key={h.id} className="flex items-center justify-between p-3 rounded-xl" style={{ background: C.card, border: `1px solid ${C.border}` }}>
@@ -420,7 +474,7 @@ function EmployeeApp({ employee, siteCode, history, refreshHistory, refreshAbsen
       {screen === "profil" && (
         <div className="flex-1 overflow-y-auto px-5 py-5">
           <div className="flex flex-col items-center mb-5"><Avatar name={live.name} size={64} /><div className="text-sm font-semibold mt-2" style={{ fontFamily: FD }}>{live.name}</div></div>
-          {[["Profession", live.role], ["Département", live.dept], ["Téléphone", live.phone || "—"], ["Email", live.email || "—"], ["Matricule", live.matricule]].map(([l, v]) => (
+          {[["Profession", live.role], ["Agence", live.site_name || "—"], ["Département", live.dept], ["Téléphone", live.phone || "—"], ["Email", live.email || "—"], ["Matricule", live.matricule]].map(([l, v]) => (
             <div key={l} className="flex items-center justify-between py-3" style={{ borderTop: `1px solid ${C.border}` }}>
               <span className="text-xs" style={{ color: C.muted }}>{l}</span><span className="text-sm font-medium">{v}</span>
             </div>
@@ -477,17 +531,19 @@ export default function App() {
   const [absences, setAbsences] = useState([]);
   const [history, setHistory] = useState([]);
   const [siteCode, setSiteCode] = useState("MB-INIT");
+  const [sites, setSites] = useState([]);
 
   const refreshEmployees = async () => setEmployees(await fetchEmployees());
   const refreshAbsences = async () => setAbsences(await fetchAbsences());
   const refreshHistory = async () => setHistory(await fetchHistory());
+  const refreshSites = async () => setSites(await fetchSites());
 
   useEffect(() => {
     (async () => {
       try {
         const { data } = await supabase.auth.getSession();
         setAdminSession(data.session);
-        await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory()]);
+        await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory(), refreshSites()]);
         setSiteCode(await fetchSiteCode());
       } catch (e) {
         setInitError(String(e && e.message ? e.message : e));
@@ -533,7 +589,7 @@ export default function App() {
         {role === "admin" && !adminSession && <AdminLogin onLogin={() => {}} />}
         {role === "admin" && adminSession && (
           <AdminApp employees={employees} refreshEmployees={refreshEmployees} absences={absences} refreshAbsences={refreshAbsences}
-            siteCode={siteCode} setSiteCode={setSiteCode}
+            siteCode={siteCode} setSiteCode={setSiteCode} sites={sites}
             onLogout={async () => { await supabase.auth.signOut(); setRole(null); }} />
         )}
 
@@ -546,4 +602,4 @@ export default function App() {
       </div>
     </div>
   );
-}                       
+    }
