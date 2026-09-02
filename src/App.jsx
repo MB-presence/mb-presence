@@ -1,1 +1,1 @@
-cat /home/claude/mb-presence-v2/App.jsx | head -5
+wc -l /home/claude/mb-presence-v2/App-v3.jsx
