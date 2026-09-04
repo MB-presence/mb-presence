@@ -841,7 +841,4 @@ export default function App() {
             refreshHistory={refreshHistory} refreshAbsences={refreshAbsences}
             onLogout={() => { setEmpUser(null); setRole(null); }} />
         )}
-      </div>
-    </div>
-  );
-                                                                                }
+}
