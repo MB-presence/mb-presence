@@ -1,8 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   QrCode, LogIn, ChevronLeft, Home, History, User, Calendar,
-  CheckCircle2, LogOut, Users, CalendarX, Plus, Trash2, Check, X, Shield, MapPin, Camera, Paperclip, Briefcase, Clock,
+  CheckCircle2, LogOut, Users, CalendarX, Plus, Trash2, Check, X, Shield, MapPin, Camera, Paperclip, Clock, FileBarChart, PieChart as PieIcon, Download,
 } from "lucide-react";
+import {
+  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
 import { supabase } from "./supabaseClient";
 import { C, FD, FB, DEPARTMENTS, MOTIFS, todayISO, nowHM } from "./theme";
 
@@ -92,6 +95,80 @@ function getLocation() {
       { enableHighAccuracy: true, timeout: 12000 }
     );
   });
+}
+
+// ---------- Calculs pour Rapport & Statistiques ----------
+function parseHistoryEntries(history) {
+  return history.map(h => {
+    const m = h.detail && h.detail.match(/(Arrivée|Départ) à (\d{2}:\d{2})/);
+    if (!m) return null;
+    return { employee_id: h.employee_id, date: h.date, type: m[1] === "Arrivée" ? "arrivee" : "depart", time: m[2], status: h.status };
+  }).filter(Boolean);
+}
+
+function computeReport(history, absences, employees, from, to) {
+  const entries = parseHistoryEntries(history).filter(e => (!from || e.date >= from) && (!to || e.date <= to));
+  const byKey = {};
+  entries.forEach(e => {
+    const key = e.employee_id + "|" + e.date;
+    byKey[key] = byKey[key] || {};
+    byKey[key][e.type] = e.time;
+    if (e.type === "arrivee") byKey[key].status = e.status;
+  });
+
+  const perEmp = {};
+  Object.entries(byKey).forEach(([key, v]) => {
+    const empId = key.split("|")[0];
+    perEmp[empId] = perEmp[empId] || { present: 0, retard: 0, minutes: 0 };
+    if (v.status === "Présent") perEmp[empId].present++;
+    if (v.status === "Retard") { perEmp[empId].present++; perEmp[empId].retard++; }
+    if (v.arrivee && v.depart) {
+      const [ah, am] = v.arrivee.split(":").map(Number);
+      const [dh, dm] = v.depart.split(":").map(Number);
+      const diff = (dh * 60 + dm) - (ah * 60 + am);
+      if (diff > 0) perEmp[empId].minutes += diff;
+    }
+  });
+
+  const absByEmp = {};
+  absences.filter(a => a.status === "Approuvée" && (!from || a.date >= from) && (!to || a.date <= to)).forEach(a => {
+    absByEmp[a.employee_id] = (absByEmp[a.employee_id] || 0) + 1;
+  });
+
+  const rows = employees.map(e => {
+    const p = perEmp[e.id] || { present: 0, retard: 0, minutes: 0 };
+    const abs = absByEmp[e.id] || 0;
+    const h = Math.floor(p.minutes / 60), m = p.minutes % 60;
+    return { id: e.id, name: e.name, present: p.present, retard: p.retard, absent: abs, heures: `${h}h${String(m).padStart(2, "0")}`, minutes: p.minutes };
+  });
+
+  const totals = rows.reduce((acc, r) => ({
+    present: acc.present + r.present, retard: acc.retard + r.retard, absent: acc.absent + r.absent, minutes: acc.minutes + r.minutes,
+  }), { present: 0, retard: 0, absent: 0, minutes: 0 });
+
+  const perDay = {};
+  Object.entries(byKey).forEach(([key, v]) => {
+    const date = key.split("|")[1];
+    if (v.status === "Présent" || v.status === "Retard") perDay[date] = (perDay[date] || 0) + 1;
+  });
+  const dayData = Object.entries(perDay).sort((a, b) => a[0].localeCompare(b[0])).map(([date, count]) => ({
+    date: date.slice(5).split("-").reverse().join("/"), count,
+  }));
+
+  return { rows, totals, dayData };
+}
+
+function downloadCSV(rows, totals) {
+  let csv = "Employé;Présences;Retards;Absences;Heures travaillées\n";
+  rows.forEach(r => { csv += `${r.name};${r.present};${r.retard};${r.absent};${r.heures}\n`; });
+  const th = Math.floor(totals.minutes / 60), tm = totals.minutes % 60;
+  csv += `TOTAL;${totals.present};${totals.retard};${totals.absent};${th}h${String(tm).padStart(2, "0")}\n`;
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `rapport-mb-presence-${todayISO()}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // ================= ADMIN =================
@@ -200,6 +277,8 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
   const [tab, setTab] = useState("dashboard");
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const present = employees.filter(e => e.status === "Présent").length;
   const absent = employees.filter(e => e.status === "Absent").length;
@@ -240,6 +319,8 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
     { key: "dashboard", label: "Tableau de bord", icon: Home },
     { key: "personnel", label: "Personnel", icon: Users },
     { key: "absences", label: "Absences", icon: CalendarX },
+    { key: "rapport", label: "Rapport", icon: FileBarChart },
+    { key: "stats", label: "Statistiques", icon: PieIcon },
     { key: "agences", label: "Agences", icon: MapPin },
   ];
 
@@ -247,6 +328,14 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
     const emp = employees.find(e => e.id === h.employee_id);
     return { ...h, empName: emp?.name || "Employé", empPhoto: emp?.photo_url };
   });
+
+  const report = useMemo(() => computeReport(history, absences, employees, dateFrom, dateTo), [history, absences, employees, dateFrom, dateTo]);
+  const pieData = [
+    { name: "Présents", value: report.totals.present - report.totals.retard, color: C.green },
+    { name: "Retards", value: report.totals.retard, color: C.amber },
+    { name: "Absences", value: report.totals.absent, color: C.red },
+  ];
+  const totalHeures = `${Math.floor(report.totals.minutes / 60)}h${String(report.totals.minutes % 60).padStart(2, "0")}`;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -286,7 +375,7 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
             </Card>
             <Card style={{ padding: 16 }}>
               <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Dernières activités</div>
-              {recentActivity.length === 0  ? <Empty icon={Clock} title="Aucune activité récente" sub="Les arrivées et départs apparaîtront ici." /> :
+              {recentActivity.length === 0 ? <Empty icon={Clock} title="Aucune activité récente" sub="Les arrivées et départs apparaîtront ici." /> :
                 <div className="flex flex-col gap-2">
                   {recentActivity.map((h, i) => (
                     <div key={h.id || i} className="flex items-center gap-3 py-2" style={{ borderTop: `1px solid ${C.border}` }}>
@@ -338,6 +427,67 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
                   </div>
                 </Card>
               ))}
+          </div>
+        )}
+
+        {tab === "rapport" && (
+          <div className="flex flex-col gap-3">
+            <Card style={{ padding: 16 }}>
+              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Période</div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 text-xs"><span style={{ color: C.muted }}>Du</span><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-2 py-1.5 rounded-lg text-xs outline-none" style={inputStyle} /></div>
+                <div className="flex items-center gap-1.5 text-xs"><span style={{ color: C.muted }}>Au</span><input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-2 py-1.5 rounded-lg text-xs outline-none" style={inputStyle} /></div>
+              </div>
+            </Card>
+            <div className="grid grid-cols-2 gap-3">
+              <Card style={{ padding: 16 }}><div className="text-xl font-bold" style={{ color: C.green, fontFamily: FD }}>{report.totals.present - report.totals.retard}</div><div className="text-xs" style={{ color: C.muted }}>Présences</div></Card>
+              <Card style={{ padding: 16 }}><div className="text-xl font-bold" style={{ color: C.blue, fontFamily: FD }}>{totalHeures}</div><div className="text-xs" style={{ color: C.muted }}>Heures travaillées</div></Card>
+              <Card style={{ padding: 16 }}><div className="text-xl font-bold" style={{ color: C.red, fontFamily: FD }}>{report.totals.absent}</div><div className="text-xs" style={{ color: C.muted }}>Absences</div></Card>
+              <Card style={{ padding: 16 }}><div className="text-xl font-bold" style={{ color: C.amber, fontFamily: FD }}>{report.totals.retard}</div><div className="text-xs" style={{ color: C.muted }}>Retards</div></Card>
+            </div>
+            <Btn icon={Download} variant="ghost" onClick={() => downloadCSV(report.rows, report.totals)}>Exporter en CSV</Btn>
+            <Card style={{ padding: 16 }}>
+              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Détail par employé</div>
+              {report.rows.length === 0 ? <Empty icon={FileBarChart} title="Aucune donnée" sub="Aucune activité sur cette période." /> :
+                <div className="flex flex-col gap-2">
+                  {report.rows.map(r => (
+                    <div key={r.id} className="flex items-center justify-between py-2 text-xs" style={{ borderTop: `1px solid ${C.border}` }}>
+                      <span className="font-medium" style={{ color: C.text }}>{r.name}</span>
+                      <span style={{ color: C.muted }}>{r.present}p · {r.retard}r · {r.absent}a · {r.heures}</span>
+                    </div>
+                  ))}
+                </div>}
+            </Card>
+          </div>
+        )}
+
+        {tab === "stats" && (
+          <div className="flex flex-col gap-3">
+            <Card style={{ padding: 16 }}>
+              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Répartition des présences</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={pieData} dataKey="value" innerRadius={45} outerRadius={70} paddingAngle={3}>
+                    {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </Card>
+            <Card style={{ padding: 16 }}>
+              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Présences par jour</div>
+              {report.dayData.length === 0 ? <Empty icon={PieIcon} title="Pas encore de données" sub="Les présences par jour apparaîtront ici." /> :
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart data={report.dayData}>
+                    <CartesianGrid stroke={C.border} vertical={false} />
+                    <XAxis dataKey="date" tick={{ fill: C.muted, fontSize: 10 }} axisLine={{ stroke: C.border }} tickLine={false} />
+                    <YAxis tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip />
+                    <Bar dataKey="count" name="Présences" fill={C.blue} radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>}
+            </Card>
           </div>
         )}
 
@@ -694,4 +844,4 @@ export default function App() {
       </div>
     </div>
   );
-}
+                                                                                }
