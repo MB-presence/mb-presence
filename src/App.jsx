@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import {
   QrCode, LogIn, ChevronLeft, Home, History, User, Calendar,
-  CheckCircle2, LogOut, Users, CalendarX, Plus, Trash2, Check, X, Shield, MapPin, Camera,
+  CheckCircle2, LogOut, Users, CalendarX, Plus, Trash2, Check, X, Shield, MapPin, Camera, Paperclip, Briefcase, Clock,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 import { C, FD, FB, DEPARTMENTS, MOTIFS, todayISO, nowHM } from "./theme";
@@ -76,7 +76,6 @@ async function fetchSites() {
   return data;
 }
 
-// Récupère la position GPS du téléphone, avec un message d'erreur clair en français
 function getLocation() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -197,7 +196,7 @@ function AdminAddModal({ onClose, onSave, sites, saving }) {
   );
 }
 
-function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, sites, onLogout }) {
+function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, sites, history, onLogout }) {
   const [tab, setTab] = useState("dashboard");
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -244,6 +243,11 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
     { key: "agences", label: "Agences", icon: MapPin },
   ];
 
+  const recentActivity = history.slice(0, 6).map(h => {
+    const emp = employees.find(e => e.id === h.employee_id);
+    return { ...h, empName: emp?.name || "Employé", empPhoto: emp?.photo_url };
+  });
+
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex items-center justify-between px-4 h-14 shrink-0" style={{ background: C.navy }}>
@@ -269,13 +273,29 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
               <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ color: C.amber, fontFamily: FD }}>{retard}</div><div className="text-xs" style={{ color: C.muted }}>Retards</div></Card>
             </div>
             <Card style={{ padding: 16 }}>
-              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Présences du jour</div>
+              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Aperçu des présences aujourd'hui</div>
               {employees.length === 0 ? <Empty icon={Users} title="Aucun employé" sub="Ajoutez votre personnel dans l'onglet Personnel." /> :
                 <div className="flex flex-col gap-2">
                   {employees.map(e => (
                     <div key={e.id} className="flex items-center justify-between py-2" style={{ borderTop: `1px solid ${C.border}` }}>
                       <div className="flex items-center gap-2"><Avatar name={e.name} size={28} photoUrl={e.photo_url} /><div><span className="text-sm font-medium block">{e.name}</span><span className="text-xs" style={{ color: C.muted }}>{e.site_name || "—"}</span></div></div>
                       <StatusPill status={e.activity_date === todayISO() ? e.status : "Absent"} />
+                    </div>
+                  ))}
+                </div>}
+            </Card>
+            <Card style={{ padding: 16 }}>
+              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Dernières activités</div>
+              {recentActivity.length === 0  ? <Empty icon={Clock} title="Aucune activité récente" sub="Les arrivées et départs apparaîtront ici." /> :
+                <div className="flex flex-col gap-2">
+                  {recentActivity.map((h, i) => (
+                    <div key={h.id || i} className="flex items-center gap-3 py-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                      <Avatar name={h.empName} size={30} photoUrl={h.empPhoto} />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium">{h.empName}</div>
+                        <div className="text-xs" style={{ color: C.muted }}>{h.detail}</div>
+                      </div>
+                      <StatusPill status={h.status} />
                     </div>
                   ))}
                 </div>}
@@ -305,7 +325,9 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
               absences.map(a => (
                 <Card key={a.id} style={{ padding: 14 }}>
                   <div className="flex items-center justify-between">
-                    <div><div className="text-sm font-medium">{a.employee_name}</div><div className="text-xs" style={{ color: C.muted }}>{a.date} · {a.motif}{a.detail ? ` — ${a.detail}` : ""}</div></div>
+                    <div><div className="text-sm font-medium">{a.employee_name}</div><div className="text-xs" style={{ color: C.muted }}>{a.date} · {a.motif}{a.detail ? ` — ${a.detail}` : ""}</div>
+                      {a.proof_url && <a href={a.proof_url} target="_blank" rel="noreferrer" className="text-xs mt-1 inline-flex items-center gap-1" style={{ color: C.blue }}><Paperclip size={11} /> Pièce justificative</a>}
+                    </div>
                     <div className="flex items-center gap-2">
                       <StatusPill status={a.status} />
                       {a.status === "En attente" && <>
@@ -323,7 +345,7 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
           <div className="flex flex-col gap-3">
             <Card style={{ padding: 16 }}>
               <div className="text-sm font-semibold mb-1" style={{ fontFamily: FD }}>Agences enregistrées</div>
-              <div className="text-xs mb-3" style={{ color: C.muted }}>La présence de chaque employé est vérifiée par sa position GPS au moment du badgeage — plus besoin de code du jour.</div>
+              <div className="text-xs mb-3" style={{ color: C.muted }}>La présence de chaque employé est vérifiée par sa position GPS au moment du badgeage.</div>
               {sites.length === 0 ? <div className="text-xs" style={{ color: C.muted }}>Aucune agence configurée.</div> :
                 sites.map(s => (
                   <div key={s.id} className="flex items-center gap-2 py-1.5 text-xs" style={{ color: C.text }}>
@@ -372,6 +394,15 @@ function EmployeeLogin({ onLogin }) {
   );
 }
 
+function ConfirmRow({ label, value }) {
+  return (
+    <div className="flex items-center justify-between text-sm py-1.5">
+      <span style={{ color: C.muted }}>{label}</span>
+      <span className="font-semibold" style={{ color: C.text }}>{value}</span>
+    </div>
+  );
+}
+
 function EmployeeApp({ employee, history, refreshHistory, refreshAbsences, onLogout }) {
   const [live, setLive] = useState(employee);
   const [screen, setScreen] = useState("accueil");
@@ -384,6 +415,7 @@ function EmployeeApp({ employee, history, refreshHistory, refreshAbsences, onLog
   const arrivee = isToday ? live.arrivee : "--:--";
   const depart = isToday ? live.depart : "--:--";
   const canDepart = arrivee !== "--:--" && depart === "--:--";
+  const todayStr = new Date().toLocaleDateString("fr-FR");
 
   const doArrival = async () => {
     setBusy(true);
@@ -413,8 +445,18 @@ function EmployeeApp({ employee, history, refreshHistory, refreshAbsences, onLog
     refreshHistory();
     setScreen("conf-depart");
   };
-  const sendAbsence = async (d) => {
-    await supabase.from("absences").insert({ employee_id: live.id, employee_name: live.name, ...d, status: "En attente" });
+  const sendAbsence = async (d, proofFile) => {
+    let proofUrl = null;
+    if (proofFile) {
+      const ext = (proofFile.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `${live.matricule}-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from("absence-proofs").upload(path, proofFile, { upsert: true });
+      if (!upErr) {
+        const { data: urlData } = supabase.storage.from("absence-proofs").getPublicUrl(path);
+        proofUrl = urlData.publicUrl;
+      }
+    }
+    await supabase.from("absences").insert({ employee_id: live.id, employee_name: live.name, ...d, proof_url: proofUrl, status: "En attente" });
     refreshAbsences();
     setScreen("accueil");
   };
@@ -461,9 +503,25 @@ function EmployeeApp({ employee, history, refreshHistory, refreshAbsences, onLog
       )}
 
       {(screen === "conf-arrivee" || screen === "conf-depart") && (
-        <div className="flex-1 flex flex-col items-center px-6 pt-10">
-          <div className="rounded-full flex items-center justify-center mb-4" style={{ width: 70, height: 70, background: C.greenLight }}><CheckCircle2 size={34} color={C.green} /></div>
-          <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 15 }}>{screen === "conf-arrivee" ? "Arrivée enregistrée !" : "Départ enregistré !"}</div>
+        <div className="flex-1 flex flex-col items-center px-6 pt-8 overflow-y-auto">
+          <div className="rounded-full flex items-center justify-center mb-3" style={{ width: 64, height: 64, background: C.greenLight }}><CheckCircle2 size={32} color={C.green} /></div>
+          <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 15, textAlign: "center" }}>{screen === "conf-arrivee" ? "Arrivée enregistrée avec succès !" : "Départ enregistré avec succès !"}</div>
+
+          <div className="w-full rounded-2xl mt-6 p-4" style={{ background: C.bg }}>
+            <div className="flex flex-col items-center mb-3">
+              <Avatar name={live.name} size={64} photoUrl={live.photo_url} />
+            </div>
+            <ConfirmRow label="Nom et prénom" value={live.name} />
+            <ConfirmRow label="Date" value={todayStr} />
+            {screen === "conf-arrivee" ? (
+              <ConfirmRow label="Heure d'arrivée" value={live.arrivee} />
+            ) : (
+              <ConfirmRow label="Heure de départ" value={live.depart} />
+            )}
+            <ConfirmRow label="Profession" value={live.role} />
+            <ConfirmRow label="Agence" value={live.site_name || "—"} />
+          </div>
+
           <div className="w-full mt-6"><Btn onClick={() => setScreen("accueil")}>OK</Btn></div>
         </div>
       )}
@@ -515,20 +573,43 @@ function AbsenceForm({ onBack, onSend }) {
   const [date, setDate] = useState(todayISO());
   const [motif, setMotif] = useState("");
   const [detail, setDetail] = useState("");
+  const [proofFile, setProofFile] = useState(null);
+  const [proofName, setProofName] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const onPickProof = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setProofFile(file);
+    setProofName(file.name);
+  };
+
+  const submit = async () => {
+    setSending(true);
+    await onSend({ date, motif, detail }, proofFile);
+    setSending(false);
+  };
+
   return (
-    <div className="flex-1 flex flex-col px-6 pt-6">
+    <div className="flex-1 flex flex-col px-6 pt-6 overflow-y-auto">
       <button onClick={onBack} className="mb-4 self-start"><ChevronLeft size={20} /></button>
       <div className="text-sm font-semibold mb-4" style={{ fontFamily: FD }}>Signaler une absence</div>
       <div className="flex flex-col gap-3">
-        <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
-        <Field label="Motif">
+        <Field label="Date de l'absence"><input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+        <Field label="Motif de l'absence">
           <select value={motif} onChange={e => setMotif(e.target.value)} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle}>
             <option value="">Sélectionner un motif</option>{MOTIFS.map(m => <option key={m}>{m}</option>)}
           </select>
         </Field>
-        <Field label="Explication (optionnel)"><textarea value={detail} onChange={e => setDetail(e.target.value)} rows={3} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none resize-none" style={inputStyle} /></Field>
+        <Field label="Explication (optionnel)"><textarea value={detail} onChange={e => setDetail(e.target.value)} rows={3} placeholder="Donnez plus de détails..." className="w-full px-3.5 py-3 rounded-xl text-sm outline-none resize-none" style={inputStyle} /></Field>
+        <Field label="Pièce justificative (optionnel)">
+          <label className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-medium cursor-pointer" style={{ background: C.blueLight, color: C.blue }}>
+            <Paperclip size={15} /> {proofName || "Ajouter un fichier"}
+            <input type="file" accept="image/*,.pdf" onChange={onPickProof} className="hidden" />
+          </label>
+        </Field>
       </div>
-      <div className="mt-5"><Btn disabled={!motif} onClick={() => onSend({ date, motif, detail })}>Envoyer la demande</Btn></div>
+      <div className="mt-5 mb-4"><Btn disabled={!motif || sending} onClick={submit}>{sending ? "Envoi..." : "Envoyer la demande"}</Btn></div>
     </div>
   );
 }
@@ -600,7 +681,7 @@ export default function App() {
         {role === "admin" && !adminSession && <AdminLogin onLogin={() => {}} />}
         {role === "admin" && adminSession && (
           <AdminApp employees={employees} refreshEmployees={refreshEmployees} absences={absences} refreshAbsences={refreshAbsences}
-            sites={sites}
+            sites={sites} history={history}
             onLogout={async () => { await supabase.auth.signOut(); setRole(null); }} />
         )}
 
@@ -613,4 +694,4 @@ export default function App() {
       </div>
     </div>
   );
-  }
+}
