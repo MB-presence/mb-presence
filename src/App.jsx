@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useMemo } from "react";
 import {
-  QrCode, LogIn, ChevronLeft, Home, History, User, Calendar,
-  CheckCircle2, LogOut, Users, CalendarX, Plus, Trash2, Check, X, Shield, MapPin, Camera, Paperclip, Clock, FileBarChart, PieChart as PieIcon, Download,
+  LogIn, ChevronLeft, Home, History, User, Calendar,
+  CheckCircle2, LogOut, Users, CalendarX, Plus, Trash2, Check, X, Shield, MapPin, Camera, Paperclip, Clock, FileBarChart, PieChart as PieIcon, Download, Phone, Mail, Hash,
 } from "lucide-react";
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { supabase } from "./supabaseClient";
 import { C, FD, FB, DEPARTMENTS, MOTIFS, todayISO, nowHM } from "./theme";
+
+const TOKEN_KEY = "mbp_session_token";
 
 // ---------- UI atoms ----------
 function Btn({ children, onClick, disabled, icon: Icon, variant = "primary", style }) {
@@ -34,6 +36,9 @@ function StatusPill({ status }) {
   const [bg, fg] = map[status] || ["#EEE", C.muted];
   return <span className="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold" style={{ background: bg, color: fg }}>{status}</span>;
 }
+function Badge({ label, value, color }) {
+  return <span className="inline-flex items-center px-2 py-1 rounded-lg text-xs font-semibold" style={{ background: color + "1A", color }}>{value} {label}</span>;
+}
 function Avatar({ name, size = 36, photoUrl }) {
   const initials = (name || "?").split(" ").map(n => n[0]).slice(0, 2).join("").toUpperCase();
   if (photoUrl) {
@@ -56,11 +61,26 @@ function Empty({ icon: Icon, title, sub }) {
     </div>
   );
 }
+function InfoChip({ icon: Icon, color, children }) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs">
+      <div className="rounded-md flex items-center justify-center" style={{ width: 20, height: 20, background: color + "1A" }}>
+        <Icon size={11} color={color} />
+      </div>
+      <span style={{ color: C.text }}>{children}</span>
+    </div>
+  );
+}
 
 // ---------- Accès aux données (Supabase) ----------
 async function fetchEmployees() {
   const { data, error } = await supabase.from("employees_public").select("*").order("created_at");
   if (error) { console.error(error); return []; }
+  return data;
+}
+async function fetchEmployeeById(id) {
+  const { data, error } = await supabase.from("employees_public").select("*").eq("id", id).single();
+  if (error) { console.error(error); return null; }
   return data;
 }
 async function fetchAbsences() {
@@ -170,42 +190,58 @@ function downloadCSV(rows, totals) {
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+function isImageUrl(url) {
+  return /\.(jpe?g|png|gif|webp)$/i.test(url || "");
+}
 
-// ================= ADMIN =================
-function AdminLogin({ onLogin }) {
-  const [email, setEmail] = useState("");
+// ================= CONNEXION UNIFIÉE =================
+function UnifiedLogin({ onLoggedIn }) {
+  const [identifiant, setIdentifiant] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const doLogin = async () => {
+  const tryLogin = async () => {
+    if (!identifiant.trim() || !password) return;
     setLoading(true); setErr("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.rpc("login_account", {
+      p_identifiant: identifiant.trim(), p_password: password,
+    });
     setLoading(false);
-    if (error) setErr("Identifiants incorrects.");
-    else onLogin();
+    if (error) { setErr("Erreur de connexion. Réessayez."); return; }
+    const status = data && data.status;
+    if (status === "not_found") { setErr("Compte inexistant."); return; }
+    if (status === "disabled") { setErr("Compte désactivé."); return; }
+    if (status === "wrong_password") { setErr("Identifiant ou mot de passe incorrect."); return; }
+    if (status === "ok") {
+      localStorage.setItem(TOKEN_KEY, data.token);
+      onLoggedIn({ token: data.token, role: data.role, employeeId: data.employee_id });
+      return;
+    }
+    setErr("Identifiant ou mot de passe incorrect.");
   };
 
   return (
     <div className="flex-1 flex flex-col justify-center px-6">
       <div className="flex flex-col items-center mb-6">
-        <div className="rounded-2xl flex items-center justify-center font-extrabold mb-3" style={{ width: 56, height: 56, background: C.gold, color: C.navy, fontFamily: FD, fontSize: 20 }}>MB</div>
-        <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>Site Administrateur</div>
-        <div className="text-xs mt-1" style={{ color: C.muted }}>Connexion sécurisée (Supabase Auth)</div>
+        <div className="rounded-2xl flex items-center justify-center font-extrabold mb-3" style={{ width: 60, height: 60, background: C.gold, color: C.navy, fontFamily: FD, fontSize: 22 }}>MB</div>
+        <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 18 }}>MB PRESENCE</div>
+        <div className="text-xs mt-1" style={{ color: C.muted }}>Connectez-vous à votre compte</div>
       </div>
       <div className="flex flex-col gap-3">
-        <Field label="Email"><input value={email} onChange={e => setEmail(e.target.value)} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
-        <Field label="Mot de passe"><input type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+        <Field label="Identifiant"><input value={identifiant} onChange={e => { setIdentifiant(e.target.value); setErr(""); }} placeholder="Ex : MBadmin01 ou MB1001" className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+        <Field label="Mot de passe"><input type="password" value={password} onChange={e => { setPassword(e.target.value); setErr(""); }} placeholder="••••••••" className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
       </div>
       {err && <div className="text-xs mt-2" style={{ color: C.red }}>{err}</div>}
-      <div className="mt-4"><Btn disabled={loading} onClick={doLogin}>{loading ? "Connexion..." : "Se connecter"}</Btn></div>
+      <div className="mt-4"><Btn disabled={loading} icon={LogIn} onClick={tryLogin}>{loading ? "Connexion..." : "Se connecter"}</Btn></div>
       <div className="text-center text-xs mt-6" style={{ color: C.muted }}>
-        Compte créé dans Supabase &gt; Authentication &gt; Users.
+        Identifiant et mot de passe remis par l'administrateur.
       </div>
     </div>
   );
 }
 
+// ================= ADMIN =================
 function AdminAddModal({ onClose, onSave, sites, saving }) {
   const [f, setF] = useState({ matricule: "", pin: "", name: "", role: "", dept: DEPARTMENTS[0], phone: "", email: "", site_id: sites[0]?.id || "" });
   const [photoFile, setPhotoFile] = useState(null);
@@ -240,14 +276,14 @@ function AdminAddModal({ onClose, onSave, sites, saving }) {
             <div className="absolute -bottom-1 -right-1 rounded-full flex items-center justify-center" style={{ width: 26, height: 26, background: C.gold }}>
               <Camera size={13} color={C.navy} />
             </div>
-            <input type="file" accept="image/*" capture="environment" onChange={onPickPhoto} className="hidden" />
+            <input type="file" accept="image/*" onChange={onPickPhoto} className="hidden" />
           </label>
-          <div className="text-xs mt-2" style={{ color: C.muted }}>Photo de l'employé</div>
+          <div className="text-xs mt-2" style={{ color: C.muted }}>Photo de l'employé (galerie ou appareil photo)</div>
         </div>
 
         <div className="flex flex-col gap-3">
-          <Field label="Matricule (unique)"><input value={f.matricule} onChange={set("matricule")} placeholder="Ex : MB1001" className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
-          <Field label="Code PIN (4 chiffres, à transmettre à l'employé)"><input value={f.pin} onChange={set("pin")} placeholder="Ex : 4821" maxLength={4} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+          <Field label="Matricule / identifiant (unique)"><input value={f.matricule} onChange={set("matricule")} placeholder="Ex : MBEMP025" className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
+          <Field label="Mot de passe (4 chiffres, à transmettre à l'employé)"><input value={f.pin} onChange={set("pin")} placeholder="Ex : 4821" maxLength={4} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
           <Field label="Nom et prénom"><input value={f.name} onChange={set("name")} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
           <Field label="Fonction"><input value={f.role} onChange={set("role")} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
           <Field label="Agence">
@@ -273,7 +309,7 @@ function AdminAddModal({ onClose, onSave, sites, saving }) {
   );
 }
 
-function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, sites, history, onLogout }) {
+function AdminApp({ token, employees, refreshEmployees, absences, refreshAbsences, sites, history, onLogout, onSessionExpired }) {
   const [tab, setTab] = useState("dashboard");
   const [showAdd, setShowAdd] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -283,6 +319,13 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
   const present = employees.filter(e => e.status === "Présent").length;
   const absent = employees.filter(e => e.status === "Absent").length;
   const retard = employees.filter(e => e.status === "Retard").length;
+
+  const handleAuthError = (error) => {
+    const msg = error && error.message ? error.message : "";
+    if (msg.includes("SESSION_EXPIREE")) { onSessionExpired(); return true; }
+    if (msg.includes("ACCES_REFUSE")) { alert("Accès refusé."); return true; }
+    return false;
+  };
 
   const addEmployee = async (f, photoFile) => {
     setSaving(true);
@@ -296,22 +339,25 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
       photoUrl = urlData.publicUrl;
     }
     const { error } = await supabase.rpc("create_employee", {
+      p_token: token,
       p_matricule: f.matricule.trim(), p_pin: f.pin.trim(), p_name: f.name.trim(),
       p_role: f.role.trim(), p_dept: f.dept, p_phone: f.phone.trim(), p_email: f.email.trim(),
       p_site_id: f.site_id, p_photo_url: photoUrl,
     });
     setSaving(false);
-    if (error) { alert("Erreur : " + error.message); return; }
+    if (error) { if (!handleAuthError(error)) alert("Erreur : " + error.message); return; }
     setShowAdd(false);
     refreshEmployees();
   };
   const deleteEmployee = async (id) => {
     if (!confirm("Supprimer cette fiche ?")) return;
-    await supabase.from("employees").delete().eq("id", id);
+    const { error } = await supabase.rpc("admin_delete_employee", { p_token: token, p_employee_id: id });
+    if (error) { if (!handleAuthError(error)) alert("Erreur : " + error.message); return; }
     refreshEmployees();
   };
   const updateAbsence = async (id, status) => {
-    await supabase.from("absences").update({ status }).eq("id", id);
+    const { error } = await supabase.rpc("admin_update_absence", { p_token: token, p_absence_id: id, p_status: status });
+    if (error) { if (!handleAuthError(error)) alert("Erreur : " + error.message); return; }
     refreshAbsences();
   };
 
@@ -338,173 +384,221 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
   const totalHeures = `${Math.floor(report.totals.minutes / 60)}h${String(report.totals.minutes % 60).padStart(2, "0")}`;
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex items-center justify-between px-4 h-14 shrink-0" style={{ background: C.navy }}>
-        <span style={{ fontFamily: FD, fontWeight: 700, fontSize: 14, color: "#fff" }}>Admin MB PRESENCE</span>
-        <button onClick={onLogout}><LogOut size={17} color="#B9C6DE" /></button>
-      </div>
-      <div className="flex overflow-x-auto gap-2 px-3 py-2 shrink-0" style={{ background: C.navy }}>
-        {nav.map(n => (
-          <button key={n.key} onClick={() => setTab(n.key)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs whitespace-nowrap"
-            style={{ background: tab === n.key ? "rgba(232,163,61,0.16)" : "transparent", color: tab === n.key ? C.gold : "#B9C6DE" }}>
-            <n.icon size={13} /> {n.label}
-          </button>
-        ))}
-      </div>
+    <div className="flex min-h-screen" style={{ background: C.bg }}>
+      <aside className="hidden md:flex flex-col shrink-0" style={{ width: 220, background: C.navy, minHeight: "100vh" }}>
+        <div className="flex items-center gap-2.5 px-5 py-6">
+          <div className="rounded-xl flex items-center justify-center font-extrabold" style={{ width: 34, height: 34, background: C.gold, color: C.navy, fontFamily: FD }}>MB</div>
+          <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 14, color: "#fff" }}>MB PRESENCE</div>
+        </div>
+        <div className="flex flex-col gap-1 px-3 flex-1">
+          {nav.map(n => (
+            <button key={n.key} onClick={() => setTab(n.key)} className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-left"
+              style={{ background: tab === n.key ? "rgba(232,163,61,0.16)" : "transparent", color: tab === n.key ? C.gold : "#B9C6DE", fontWeight: tab === n.key ? 600 : 500 }}>
+              <n.icon size={16} /> {n.label}
+            </button>
+          ))}
+        </div>
+        <button onClick={onLogout} className="flex items-center gap-3 px-6 py-4 text-sm" style={{ color: "#B9C6DE" }}>
+          <LogOut size={16} /> Déconnexion
+        </button>
+      </aside>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        {tab === "dashboard" && (
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ fontFamily: FD }}>{employees.length}</div><div className="text-xs" style={{ color: C.muted }}>Personnel total</div></Card>
-              <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ color: C.green, fontFamily: FD }}>{present}</div><div className="text-xs" style={{ color: C.muted }}>Présents</div></Card>
-              <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ color: C.red, fontFamily: FD }}>{absent}</div><div className="text-xs" style={{ color: C.muted }}>Absents</div></Card>
-              <Card style={{ padding: 16 }}><div className="text-2xl font-bold" style={{ color: C.amber, fontFamily: FD }}>{retard}</div><div className="text-xs" style={{ color: C.muted }}>Retards</div></Card>
-            </div>
-            <Card style={{ padding: 16 }}>
-              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Aperçu des présences aujourd'hui</div>
-              {employees.length === 0 ? <Empty icon={Users} title="Aucun employé" sub="Ajoutez votre personnel dans l'onglet Personnel." /> :
-                <div className="flex flex-col gap-2">
-                  {employees.map(e => (
-                    <div key={e.id} className="flex items-center justify-between py-2" style={{ borderTop: `1px solid ${C.border}` }}>
-                      <div className="flex items-center gap-2"><Avatar name={e.name} size={28} photoUrl={e.photo_url} /><div><span className="text-sm font-medium block">{e.name}</span><span className="text-xs" style={{ color: C.muted }}>{e.site_name || "—"}</span></div></div>
-                      <StatusPill status={e.activity_date === todayISO() ? e.status : "Absent"} />
-                    </div>
-                  ))}
-                </div>}
-            </Card>
-            <Card style={{ padding: 16 }}>
-              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Dernières activités</div>
-              {recentActivity.length === 0 ? <Empty icon={Clock} title="Aucune activité récente" sub="Les arrivées et départs apparaîtront ici." /> :
-                <div className="flex flex-col gap-2">
-                  {recentActivity.map((h, i) => (
-                    <div key={h.id || i} className="flex items-center gap-3 py-2" style={{ borderTop: `1px solid ${C.border}` }}>
-                      <Avatar name={h.empName} size={30} photoUrl={h.empPhoto} />
-                      <div className="flex-1">
-                        <div className="text-sm font-medium">{h.empName}</div>
-                        <div className="text-xs" style={{ color: C.muted }}>{h.detail}</div>
-                      </div>
-                      <StatusPill status={h.status} />
-                    </div>
-                  ))}
-                </div>}
-            </Card>
-          </div>
-        )}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex md:hidden items-center justify-between px-4 h-14 shrink-0" style={{ background: C.navy }}>
+          <span style={{ fontFamily: FD, fontWeight: 700, fontSize: 14, color: "#fff" }}>Admin MB PRESENCE</span>
+          <button onClick={onLogout}><LogOut size={17} color="#B9C6DE" /></button>
+        </div>
+        <div className="flex md:hidden overflow-x-auto gap-2 px-3 py-2 shrink-0" style={{ background: C.navy }}>
+          {nav.map(n => (
+            <button key={n.key} onClick={() => setTab(n.key)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs whitespace-nowrap"
+              style={{ background: tab === n.key ? "rgba(232,163,61,0.16)" : "transparent", color: tab === n.key ? C.gold : "#B9C6DE" }}>
+              <n.icon size={13} /> {n.label}
+            </button>
+          ))}
+        </div>
 
-        {tab === "personnel" && (
-          <div className="flex flex-col gap-3">
-            <Btn icon={Plus} onClick={() => setShowAdd(true)}>Ajouter un employé</Btn>
-            {employees.length === 0 ? <Empty icon={Users} title="Aucun employé enregistré" sub="Ajoutez les vraies fiches de votre personnel." /> :
-              employees.map(e => (
-                <Card key={e.id} style={{ padding: 14 }}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3"><Avatar name={e.name} photoUrl={e.photo_url} /><div><div className="text-sm font-medium">{e.name}</div><div className="text-xs" style={{ color: C.muted }}>{e.role} · {e.dept}</div></div></div>
-                    <button onClick={() => deleteEmployee(e.id)} className="p-1.5 rounded-lg" style={{ background: C.redLight }}><Trash2 size={14} color={C.red} /></button>
-                  </div>
-                  <div className="text-xs mt-2 flex items-center gap-1" style={{ color: C.muted }}><MapPin size={11} /> {e.site_name || "Aucune agence"} · Matricule : {e.matricule}</div>
-                </Card>
-              ))}
-          </div>
-        )}
-
-        {tab === "absences" && (
-          <div className="flex flex-col gap-3">
-            {absences.length === 0 ? <Empty icon={CalendarX} title="Aucune demande d'absence" sub="Les signalements envoyés par les employés apparaîtront ici." /> :
-              absences.map(a => (
-                <Card key={a.id} style={{ padding: 14 }}>
-                  <div className="flex items-center justify-between">
-                    <div><div className="text-sm font-medium">{a.employee_name}</div><div className="text-xs" style={{ color: C.muted }}>{a.date} · {a.motif}{a.detail ? ` — ${a.detail}` : ""}</div>
-                      {a.proof_url && <a href={a.proof_url} target="_blank" rel="noreferrer" className="text-xs mt-1 inline-flex items-center gap-1" style={{ color: C.blue }}><Paperclip size={11} /> Pièce justificative</a>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <StatusPill status={a.status} />
-                      {a.status === "En attente" && <>
-                        <button onClick={() => updateAbsence(a.id, "Approuvée")} className="p-1.5 rounded-lg" style={{ background: C.greenLight }}><Check size={14} color={C.green} /></button>
-                        <button onClick={() => updateAbsence(a.id, "Refusée")} className="p-1.5 rounded-lg" style={{ background: C.redLight }}><X size={14} color={C.red} /></button>
-                      </>}
-                    </div>
-                  </div>
-                </Card>
-              ))}
-          </div>
-        )}
-
-        {tab === "rapport" && (
-          <div className="flex flex-col gap-3">
-            <Card style={{ padding: 16 }}>
-              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Période</div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="flex items-center gap-1.5 text-xs"><span style={{ color: C.muted }}>Du</span><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-2 py-1.5 rounded-lg text-xs outline-none" style={inputStyle} /></div>
-                <div className="flex items-center gap-1.5 text-xs"><span style={{ color: C.muted }}>Au</span><input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-2 py-1.5 rounded-lg text-xs outline-none" style={inputStyle} /></div>
+        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+          <div className="max-w-6xl mx-auto w-full">
+          {tab === "dashboard" && (
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+                <Card style={{ padding: 18 }}><div className="text-2xl md:text-3xl font-bold" style={{ fontFamily: FD }}>{employees.length}</div><div className="text-xs md:text-sm" style={{ color: C.muted }}>Personnel total</div></Card>
+                <Card style={{ padding: 18 }}><div className="text-2xl md:text-3xl font-bold" style={{ color: C.green, fontFamily: FD }}>{present}</div><div className="text-xs md:text-sm" style={{ color: C.muted }}>Présents</div></Card>
+                <Card style={{ padding: 18 }}><div className="text-2xl md:text-3xl font-bold" style={{ color: C.red, fontFamily: FD }}>{absent}</div><div className="text-xs md:text-sm" style={{ color: C.muted }}>Absents</div></Card>
+                <Card style={{ padding: 18 }}><div className="text-2xl md:text-3xl font-bold" style={{ color: C.amber, fontFamily: FD }}>{retard}</div><div className="text-xs md:text-sm" style={{ color: C.muted }}>Retards</div></Card>
               </div>
-            </Card>
-            <div className="grid grid-cols-2 gap-3">
-              <Card style={{ padding: 16 }}><div className="text-xl font-bold" style={{ color: C.green, fontFamily: FD }}>{report.totals.present - report.totals.retard}</div><div className="text-xs" style={{ color: C.muted }}>Présences</div></Card>
-              <Card style={{ padding: 16 }}><div className="text-xl font-bold" style={{ color: C.blue, fontFamily: FD }}>{totalHeures}</div><div className="text-xs" style={{ color: C.muted }}>Heures travaillées</div></Card>
-              <Card style={{ padding: 16 }}><div className="text-xl font-bold" style={{ color: C.red, fontFamily: FD }}>{report.totals.absent}</div><div className="text-xs" style={{ color: C.muted }}>Absences</div></Card>
-              <Card style={{ padding: 16 }}><div className="text-xl font-bold" style={{ color: C.amber, fontFamily: FD }}>{report.totals.retard}</div><div className="text-xs" style={{ color: C.muted }}>Retards</div></Card>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Card style={{ padding: 18 }}>
+                  <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Aperçu des présences aujourd'hui</div>
+                  {employees.length === 0 ? <Empty icon={Users} title="Aucun employé" sub="Ajoutez votre personnel dans l'onglet Personnel." /> :
+                    <div className="flex flex-col gap-2">
+                      {employees.map(e => (
+                        <div key={e.id} className="flex items-center justify-between py-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                          <div className="flex items-center gap-2"><Avatar name={e.name} size={28} photoUrl={e.photo_url} /><div><span className="text-sm font-medium block">{e.name}</span><span className="text-xs" style={{ color: C.muted }}>{e.site_name || "—"}</span></div></div>
+                          <StatusPill status={e.activity_date === todayISO() ? e.status : "Absent"} />
+                        </div>
+                      ))}
+                    </div>}
+                </Card>
+                <Card style={{ padding: 18 }}>
+                  <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Dernières activités</div>
+                  {recentActivity.length === 0 ? <Empty icon={Clock} title="Aucune activité récente" sub="Les arrivées et départs apparaîtront ici." /> :
+                    <div className="flex flex-col gap-2">
+                      {recentActivity.map((h, i) => (
+                        <div key={h.id || i} className="flex items-center gap-3 py-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                          <Avatar name={h.empName} size={30} photoUrl={h.empPhoto} />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">{h.empName}</div>
+                            <div className="text-xs" style={{ color: C.muted }}>{h.detail}</div>
+                          </div>
+                          <StatusPill status={h.status} />
+                        </div>
+                      ))}
+                    </div>}
+                </Card>
+              </div>
             </div>
-            <Btn icon={Download} variant="ghost" onClick={() => downloadCSV(report.rows, report.totals)}>Exporter en CSV</Btn>
-            <Card style={{ padding: 16 }}>
-              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Détail par employé</div>
-              {report.rows.length === 0 ? <Empty icon={FileBarChart} title="Aucune donnée" sub="Aucune activité sur cette période." /> :
-                <div className="flex flex-col gap-2">
-                  {report.rows.map(r => (
-                    <div key={r.id} className="flex items-center justify-between py-2 text-xs" style={{ borderTop: `1px solid ${C.border}` }}>
-                      <span className="font-medium" style={{ color: C.text }}>{r.name}</span>
-                      <span style={{ color: C.muted }}>{r.present}p · {r.retard}r · {r.absent}a · {r.heures}</span>
-                    </div>
+          )}
+
+          {tab === "personnel" && (
+            <div className="flex flex-col gap-3">
+              <div><Btn icon={Plus} onClick={() => setShowAdd(true)} style={{ width: "auto" }}>Ajouter un employé</Btn></div>
+              {employees.length === 0 ? <Empty icon={Users} title="Aucun employé enregistré" sub="Ajoutez les vraies fiches de votre personnel." /> :
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {employees.map(e => (
+                    <Card key={e.id} style={{ padding: 16 }}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3"><Avatar name={e.name} size={44} photoUrl={e.photo_url} /><div><div className="text-sm font-medium">{e.name}</div><div className="text-xs" style={{ color: C.muted }}>{e.role} · {e.dept}</div></div></div>
+                        <button onClick={() => deleteEmployee(e.id)} className="p-1.5 rounded-lg" style={{ background: C.redLight }}><Trash2 size={14} color={C.red} /></button>
+                      </div>
+                      <div className="flex flex-col gap-1.5 mt-2">
+                        <InfoChip icon={MapPin} color={C.blue}>{e.site_name || "Aucune agence"}</InfoChip>
+                        <InfoChip icon={Hash} color={C.gold}>{e.matricule}</InfoChip>
+                        {e.phone && <InfoChip icon={Phone} color={C.green}>{e.phone}</InfoChip>}
+                        {e.email && <InfoChip icon={Mail} color={C.amber}>{e.email}</InfoChip>}
+                      </div>
+                    </Card>
                   ))}
                 </div>}
-            </Card>
-          </div>
-        )}
+            </div>
+          )}
 
-        {tab === "stats" && (
-          <div className="flex flex-col gap-3">
-            <Card style={{ padding: 16 }}>
-              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Répartition des présences</div>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={pieData} dataKey="value" innerRadius={45} outerRadius={70} paddingAngle={3}>
-                    {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                  </Pie>
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </Card>
-            <Card style={{ padding: 16 }}>
-              <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Présences par jour</div>
-              {report.dayData.length === 0 ? <Empty icon={PieIcon} title="Pas encore de données" sub="Les présences par jour apparaîtront ici." /> :
+          {tab === "absences" && (
+            <div className="flex flex-col gap-3">
+              {absences.length === 0 ? <Empty icon={CalendarX} title="Aucune demande d'absence" sub="Les signalements envoyés par les employés apparaîtront ici." /> :
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {absences.map(a => (
+                    <Card key={a.id} style={{ padding: 16 }}>
+                      <div className="flex items-start justify-between mb-2">
+                        <div><div className="text-sm font-medium">{a.employee_name}</div><div className="text-xs" style={{ color: C.muted }}>{a.date} · {a.motif}{a.detail ? ` — ${a.detail}` : ""}</div></div>
+                        <StatusPill status={a.status} />
+                      </div>
+                      {a.proof_url && (
+                        <div className="mt-2 mb-3">
+                          <div className="text-xs font-medium mb-1.5" style={{ color: C.muted }}>Pièce justificative :</div>
+                          {isImageUrl(a.proof_url) ? (
+                            <a href={a.proof_url} target="_blank" rel="noreferrer">
+                              <img src={a.proof_url} alt="Justificatif" className="rounded-xl" style={{ maxHeight: 160, width: "auto", border: `1px solid ${C.border}` }} />
+                            </a>
+                          ) : (
+                            <a href={a.proof_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-lg" style={{ background: C.blueLight, color: C.blue }}>
+                              <Paperclip size={13} /> Ouvrir le document
+                            </a>
+                          )}
+                        </div>
+                      )}
+                      {a.status === "En attente" && (
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => updateAbsence(a.id, "Approuvée")} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold" style={{ background: C.greenLight, color: C.green }}><Check size={14} /> Approuver</button>
+                          <button onClick={() => updateAbsence(a.id, "Refusée")} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold" style={{ background: C.redLight, color: C.red }}><X size={14} /> Refuser</button>
+                        </div>
+                      )}
+                    </Card>
+                  ))}
+                </div>}
+            </div>
+          )}
+
+          {tab === "rapport" && (
+            <div className="flex flex-col gap-4">
+              <Card style={{ padding: 18 }}>
+                <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Période</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5 text-xs"><span style={{ color: C.muted }}>Du</span><input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="px-2 py-1.5 rounded-lg text-xs outline-none" style={inputStyle} /></div>
+                  <div className="flex items-center gap-1.5 text-xs"><span style={{ color: C.muted }}>Au</span><input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="px-2 py-1.5 rounded-lg text-xs outline-none" style={inputStyle} /></div>
+                </div>
+              </Card>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+                <Card style={{ padding: 18 }}><div className="text-xl md:text-2xl font-bold" style={{ color: C.green, fontFamily: FD }}>{report.totals.present - report.totals.retard}</div><div className="text-xs" style={{ color: C.muted }}>Présences</div></Card>
+                <Card style={{ padding: 18 }}><div className="text-xl md:text-2xl font-bold" style={{ color: C.blue, fontFamily: FD }}>{totalHeures}</div><div className="text-xs" style={{ color: C.muted }}>Heures travaillées</div></Card>
+                <Card style={{ padding: 18 }}><div className="text-xl md:text-2xl font-bold" style={{ color: C.red, fontFamily: FD }}>{report.totals.absent}</div><div className="text-xs" style={{ color: C.muted }}>Absences</div></Card>
+                <Card style={{ padding: 18 }}><div className="text-xl md:text-2xl font-bold" style={{ color: C.amber, fontFamily: FD }}>{report.totals.retard}</div><div className="text-xs" style={{ color: C.muted }}>Retards</div></Card>
+              </div>
+              <div><Btn icon={Download} variant="ghost" onClick={() => downloadCSV(report.rows, report.totals)} style={{ width: "auto" }}>Exporter en CSV</Btn></div>
+              <Card style={{ padding: 18 }}>
+                <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Détail par employé</div>
+                {report.rows.length === 0 ? <Empty icon={FileBarChart} title="Aucune donnée" sub="Aucune activité sur cette période." /> :
+                  <div className="flex flex-col gap-2">
+                    {report.rows.map(r => (
+                      <div key={r.id} className="flex items-center justify-between py-2 flex-wrap gap-2" style={{ borderTop: `1px solid ${C.border}` }}>
+                        <span className="text-sm font-medium" style={{ color: C.text }}>{r.name}</span>
+                        <div className="flex items-center gap-1.5">
+                          <Badge label="prés." value={r.present} color={C.green} />
+                          <Badge label="ret." value={r.retard} color={C.amber} />
+                          <Badge label="abs." value={r.absent} color={C.red} />
+                          <Badge label="" value={r.heures} color={C.blue} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>}
+              </Card>
+            </div>
+          )}
+
+          {tab === "stats" && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card style={{ padding: 18 }}>
+                <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Répartition des présences</div>
                 <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={report.dayData}>
-                    <CartesianGrid stroke={C.border} vertical={false} />
-                    <XAxis dataKey="date" tick={{ fill: C.muted, fontSize: 10 }} axisLine={{ stroke: C.border }} tickLine={false} />
-                    <YAxis tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                  <PieChart>
+                    <Pie data={pieData} dataKey="value" innerRadius={50} outerRadius={80} paddingAngle={3}>
+                      {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    </Pie>
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Tooltip />
-                    <Bar dataKey="count" name="Présences" fill={C.blue} radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>}
-            </Card>
-          </div>
-        )}
+                  </PieChart>
+                </ResponsiveContainer>
+              </Card>
+              <Card style={{ padding: 18 }}>
+                <div className="text-sm font-semibold mb-3" style={{ fontFamily: FD }}>Présences par jour</div>
+                {report.dayData.length === 0 ? <Empty icon={PieIcon} title="Pas encore de données" sub="Les présences par jour apparaîtront ici." /> :
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={report.dayData}>
+                      <CartesianGrid stroke={C.border} vertical={false} />
+                      <XAxis dataKey="date" tick={{ fill: C.muted, fontSize: 10 }} axisLine={{ stroke: C.border }} tickLine={false} />
+                      <YAxis tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip />
+                      <Bar dataKey="count" name="Présences" fill={C.blue} radius={[6, 6, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>}
+              </Card>
+            </div>
+          )}
 
-        {tab === "agences" && (
-          <div className="flex flex-col gap-3">
-            <Card style={{ padding: 16 }}>
-              <div className="text-sm font-semibold mb-1" style={{ fontFamily: FD }}>Agences enregistrées</div>
-              <div className="text-xs mb-3" style={{ color: C.muted }}>La présence de chaque employé est vérifiée par sa position GPS au moment du badgeage.</div>
-              {sites.length === 0 ? <div className="text-xs" style={{ color: C.muted }}>Aucune agence configurée.</div> :
-                sites.map(s => (
-                  <div key={s.id} className="flex items-center gap-2 py-1.5 text-xs" style={{ color: C.text }}>
-                    <MapPin size={12} color={C.blue} /> {s.name} <span style={{ color: C.muted }}>(rayon {s.radius_meters} m)</span>
-                  </div>
-                ))}
-            </Card>
+          {tab === "agences" && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card style={{ padding: 18 }}>
+                <div className="text-sm font-semibold mb-1" style={{ fontFamily: FD }}>Agences enregistrées</div>
+                <div className="text-xs mb-3" style={{ color: C.muted }}>La présence de chaque employé est vérifiée par sa position GPS au moment du badgeage.</div>
+                {sites.length === 0 ? <div className="text-xs" style={{ color: C.muted }}>Aucune agence configurée.</div> :
+                  sites.map(s => (
+                    <InfoChip key={s.id} icon={MapPin} color={C.blue}>{s.name} <span style={{ color: C.muted }}>(rayon {s.radius_meters} m)</span></InfoChip>
+                  ))}
+              </Card>
+            </div>
+          )}
           </div>
-        )}
+        </div>
       </div>
       {showAdd && <AdminAddModal onClose={() => setShowAdd(false)} onSave={addEmployee} sites={sites} saving={saving} />}
     </div>
@@ -512,38 +606,6 @@ function AdminApp({ employees, refreshEmployees, absences, refreshAbsences, site
 }
 
 // ================= EMPLOYÉ =================
-function EmployeeLogin({ onLogin }) {
-  const [matricule, setMatricule] = useState("");
-  const [pin, setPin] = useState("");
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const tryLogin = async () => {
-    setLoading(true); setErr("");
-    const { data, error } = await supabase.rpc("verify_employee_login", { p_matricule: matricule.trim(), p_pin: pin.trim() });
-    setLoading(false);
-    if (error || !data || data.length === 0) { setErr("Matricule ou code PIN incorrect."); return; }
-    onLogin(data[0]);
-  };
-
-  return (
-    <div className="flex-1 flex flex-col justify-center px-6">
-      <div className="flex flex-col items-center mb-6">
-        <div className="rounded-2xl flex items-center justify-center font-extrabold mb-3" style={{ width: 56, height: 56, background: C.gold, color: C.navy, fontFamily: FD, fontSize: 20 }}>MB</div>
-        <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 17 }}>MB PRESENCE</div>
-        <div className="text-xs mt-1" style={{ color: C.muted }}>Connexion employé</div>
-      </div>
-      <div className="flex flex-col gap-3">
-        <Field label="Matricule"><input value={matricule} onChange={e => { setMatricule(e.target.value); setErr(""); }} placeholder="Ex : MB1001" className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
-        <Field label="Code PIN"><input value={pin} onChange={e => { setPin(e.target.value); setErr(""); }} placeholder="4 chiffres" className="w-full px-3.5 py-3 rounded-xl text-sm outline-none" style={inputStyle} /></Field>
-      </div>
-      {err && <div className="text-xs mt-2" style={{ color: C.red }}>{err}</div>}
-      <div className="mt-4"><Btn disabled={loading} icon={LogIn} onClick={tryLogin}>{loading ? "Connexion..." : "Se connecter"}</Btn></div>
-      <div className="text-center text-xs mt-6" style={{ color: C.muted }}>Matricule et PIN sont remis par l'administrateur.</div>
-    </div>
-  );
-}
-
 function ConfirmRow({ label, value }) {
   return (
     <div className="flex items-center justify-between text-sm py-1.5">
@@ -642,10 +704,10 @@ function EmployeeApp({ employee, history, refreshHistory, refreshAbsences, onLog
               <LogOut size={18} color={C.green} /><span className="text-xs font-semibold">Enregistrer départ</span>
             </button>
             <button onClick={() => setScreen("absence")} className="flex flex-col items-start gap-2 p-4 rounded-2xl text-left" style={{ background: C.card, border: `1px solid ${C.border}` }}>
-              <Calendar size={18} color={C.amber} /><span className="text-xs font-semibold">Signaler une absence</span>
+              <Calendar size={18} color={C.red} /><span className="text-xs font-semibold">Signaler une absence</span>
             </button>
             <button onClick={() => setScreen("historique")} className="flex flex-col items-start gap-2 p-4 rounded-2xl text-left" style={{ background: C.card, border: `1px solid ${C.border}` }}>
-              <History size={18} color={C.navy} /><span className="text-xs font-semibold">Mon historique</span>
+              <History size={18} color={C.gold} /><span className="text-xs font-semibold">Mon historique</span>
             </button>
           </div>
           {arrivalErr && <div className="text-xs mt-3 mx-5 p-3 rounded-xl" style={{ background: C.redLight, color: C.red }}>{arrivalErr}</div>}
@@ -767,10 +829,8 @@ function AbsenceForm({ onBack, onSend }) {
 // ================= APP RACINE =================
 export default function App() {
   const [ready, setReady] = useState(false);
-  const [initError, setInitError] = useState(null);
-  const [role, setRole] = useState(null);
-  const [adminSession, setAdminSession] = useState(null);
-  const [empUser, setEmpUser] = useState(null);
+  const [session, setSession] = useState(null); // { token, role, employeeId }
+  const [employeeProfile, setEmployeeProfile] = useState(null);
 
   const [employees, setEmployees] = useState([]);
   const [absences, setAbsences] = useState([]);
@@ -782,19 +842,31 @@ export default function App() {
   const refreshHistory = async () => setHistory(await fetchHistory());
   const refreshSites = async () => setSites(await fetchSites());
 
+  const doLogout = () => {
+    localStorage.removeItem(TOKEN_KEY);
+    setSession(null);
+    setEmployeeProfile(null);
+  };
+
   useEffect(() => {
     (async () => {
-      try {
-        const { data } = await supabase.auth.getSession();
-        setAdminSession(data.session);
-        await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory(), refreshSites()]);
-      } catch (e) {
-        setInitError(String(e && e.message ? e.message : e));
+      await Promise.all([refreshEmployees(), refreshAbsences(), refreshHistory(), refreshSites()]);
+
+      const savedToken = localStorage.getItem(TOKEN_KEY);
+      if (savedToken) {
+        const { data } = await supabase.rpc("session_whoami", { p_token: savedToken });
+        if (data && data.status === "ok") {
+          setSession({ token: savedToken, role: data.role, employeeId: data.employee_id });
+          if (data.role === "employee") {
+            const prof = await fetchEmployeeById(data.employee_id);
+            setEmployeeProfile(prof);
+          }
+        } else {
+          localStorage.removeItem(TOKEN_KEY);
+        }
       }
       setReady(true);
     })();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => setAdminSession(session));
 
     const channel = supabase
       .channel("mbp-realtime")
@@ -803,45 +875,57 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "history" }, refreshHistory)
       .subscribe();
 
-    return () => { sub.subscription.unsubscribe(); supabase.removeChannel(channel); };
+    return () => { supabase.removeChannel(channel); };
   }, []);
+
+  const handleLoggedIn = async ({ token, role, employeeId }) => {
+    setSession({ token, role, employeeId });
+    if (role === "employee") {
+      const prof = await fetchEmployeeById(employeeId);
+      setEmployeeProfile(prof);
+    }
+  };
 
   if (!ready) {
     return <div className="flex items-center justify-center" style={{ height: 400, color: C.muted, fontFamily: FB }}>Chargement…</div>;
   }
-  if (initError) {
-    return <div style={{ padding: 24, color: C.red, fontFamily: FB, fontSize: 13 }}>Erreur de connexion : {initError}</div>;
+
+  // Non connecté : formulaire unique
+  if (!session) {
+    return (
+      <div style={{ fontFamily: FB, background: C.bg }} className="flex justify-center min-h-screen py-6">
+        <div className="flex flex-col overflow-hidden w-full max-w-sm" style={{ height: 620, borderRadius: 28, border: `8px solid ${C.navy}`, boxShadow: "0 20px 50px rgba(11,31,58,0.25)" }}>
+          <UnifiedLogin onLoggedIn={handleLoggedIn} />
+        </div>
+      </div>
+    );
   }
 
-  return (
-    <div style={{ fontFamily: FB, background: C.bg }} className="flex justify-center min-h-screen py-6">
-      <div className="flex flex-col overflow-hidden" style={{ width: 380, height: 780, borderRadius: 28, border: `8px solid ${C.navy}`, boxShadow: "0 20px 50px rgba(11,31,58,0.25)" }}>
-        {!role && (
-          <div className="flex-1 flex flex-col justify-center px-8 gap-3" style={{ background: C.bg }}>
-            <div className="flex flex-col items-center mb-6">
-              <div className="rounded-2xl flex items-center justify-center font-extrabold mb-3" style={{ width: 60, height: 60, background: C.gold, color: C.navy, fontFamily: FD, fontSize: 22 }}>MB</div>
-              <div style={{ fontFamily: FD, fontWeight: 700, fontSize: 18 }}>MB PRESENCE</div>
-              <div className="text-xs mt-1" style={{ color: C.muted }}>Choisissez votre espace</div>
-            </div>
-            <Btn onClick={() => setRole("employee")} icon={User}>Espace Employé</Btn>
-            <Btn variant="ghost" onClick={() => setRole("admin")} icon={Shield}>Espace Administrateur</Btn>
-          </div>
-        )}
-
-        {role === "admin" && !adminSession && <AdminLogin onLogin={() => {}} />}
-        {role === "admin" && adminSession && (
-          <AdminApp employees={employees} refreshEmployees={refreshEmployees} absences={absences} refreshAbsences={refreshAbsences}
-            sites={sites} history={history}
-            onLogout={async () => { await supabase.auth.signOut(); setRole(null); }} />
-        )}
-
-        {role === "employee" && !empUser && <EmployeeLogin onLogin={setEmpUser} />}
-        {role === "employee" && empUser && (
-          <EmployeeApp employee={empUser} history={history}
-            refreshHistory={refreshHistory} refreshAbsences={refreshAbsences}
-            onLogout={() => { setEmpUser(null); setRole(null); }} />
-        )}
+  // Administrateur : plein écran, adapté à l'ordinateur
+  if (session.role === "admin") {
+    return (
+      <div style={{ fontFamily: FB }}>
+        <AdminApp token={session.token} employees={employees} refreshEmployees={refreshEmployees} absences={absences} refreshAbsences={refreshAbsences}
+          sites={sites} history={history}
+          onLogout={doLogout}
+          onSessionExpired={() => { alert("Votre session a expiré, veuillez vous reconnecter."); doLogout(); }} />
       </div>
-    </div>
-  );}
-  
+    );
+  }
+
+  // Employé : format mobile
+  if (session.role === "employee" && employeeProfile) {
+    return (
+      <div style={{ fontFamily: FB, background: C.bg }} className="flex justify-center min-h-screen py-6">
+        <div className="flex flex-col overflow-hidden" style={{ width: 380, height: 780, borderRadius: 28, border: `8px solid ${C.navy}`, boxShadow: "0 20px 50px rgba(11,31,58,0.25)" }}>
+          <EmployeeApp employee={employeeProfile} history={history}
+            refreshHistory={refreshHistory} refreshAbsences={refreshAbsences}
+            onLogout={doLogout} />
+        </div>
+      </div>
+    );
+  }
+
+  return <div className="flex items-center justify-center" style={{ height: 400, color: C.muted, fontFamily: FB }}>Chargement…</div>;
+             }
+    
