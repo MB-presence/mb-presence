@@ -831,6 +831,8 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null); // { token, role, employeeId }
   const [employeeProfile, setEmployeeProfile] = useState(null);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [showIosHint, setShowIosHint] = useState(false);
 
   const [employees, setEmployees] = useState([]);
   const [absences, setAbsences] = useState([]);
