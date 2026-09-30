@@ -877,8 +877,29 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "history" }, refreshHistory)
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+ return () => { supabase.removeChannel(channel); };
   }, []);
+
+  useEffect(() => {
+    const onBeforeInstall = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+
+    const isIos = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+    const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone;
+    if (isIos && !isStandalone) setShowIosHint(true);
+
+    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice;
+    setInstallPrompt(null);
+  };   
 
   const handleLoggedIn = async ({ token, role, employeeId }) => {
     setSession({ token, role, employeeId });
